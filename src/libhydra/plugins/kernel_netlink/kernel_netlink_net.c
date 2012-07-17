@@ -38,6 +38,7 @@
  */
 
 #include <sys/socket.h>
+#include <sys/utsname.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
 #include <unistd.h>
@@ -186,8 +187,8 @@ static u_int route_entry_hash(route_entry_t *this)
 static bool route_entry_equals(route_entry_t *a, route_entry_t *b)
 {
 	return a->if_name && b->if_name && streq(a->if_name, b->if_name) &&
-		   a->src_ip->equals(a->src_ip, b->src_ip) &&
-		   a->gateway->equals(a->gateway, b->gateway) &&
+		   a->src_ip->ip_equals(a->src_ip, b->src_ip) &&
+		   a->gateway->ip_equals(a->gateway, b->gateway) &&
 		   chunk_equals(a->dst_net, b->dst_net) && a->prefixlen == b->prefixlen;
 }
 
@@ -253,11 +254,6 @@ struct private_kernel_netlink_net_t {
 	linked_list_t *ifaces;
 
 	/**
-	 * job receiving netlink events
-	 */
-	callback_job_t *job;
-
-	/**
 	 * netlink rt socket (routing)
 	 */
 	netlink_socket_t *socket;
@@ -311,6 +307,11 @@ struct private_kernel_netlink_net_t {
 	 * whether to actually install virtual IPs
 	 */
 	bool install_virtual_ip;
+
+	/**
+	 * whether preferred source addresses can be specified for IPv6 routes
+	 */
+	bool rta_prefsrc_for_ipv6;
 
 	/**
 	 * list with routing tables to be excluded from route lookup
@@ -789,6 +790,10 @@ static void process_route(private_kernel_netlink_net_t *this, struct nlmsghdr *h
 	{
 		return;
 	}
+	else if (msg->rtm_flags & RTM_F_CLONED)
+	{	/* ignore cached routes, seem to be created a lot for IPv6 */
+		return;
+	}
 
 	while (RTA_OK(rta, rtasize))
 	{
@@ -1126,12 +1131,12 @@ static host_t *get_route(private_kernel_netlink_net_t *this, host_t *dest,
 
 	hdr = (struct nlmsghdr*)request;
 	hdr->nlmsg_flags = NLM_F_REQUEST;
-	if (dest->get_family(dest) == AF_INET)
-	{
-		/* We dump all addresses for IPv4, as we want to ignore IPsec specific
-		 * routes installed by us. But the kernel does not return source
-		 * addresses in a IPv6 dump, so fall back to get() for v6 routes. */
-		hdr->nlmsg_flags |= NLM_F_ROOT | NLM_F_DUMP;
+	if (dest->get_family(dest) == AF_INET || this->rta_prefsrc_for_ipv6 ||
+		this->routing_table)
+	{	/* kernels prior to 3.0 do not support RTA_PREFSRC for IPv6 routes.
+		 * as we want to ignore routes with virtual IPs we cannot use DUMP
+		 * if these routes are not installed in a separate table */
+		hdr->nlmsg_flags |= NLM_F_DUMP;
 	}
 	hdr->nlmsg_type = RTM_GETROUTE;
 	hdr->nlmsg_len = NLMSG_LENGTH(sizeof(struct rtmsg));
@@ -1741,6 +1746,36 @@ static status_t manage_rule(private_kernel_netlink_net_t *this, int nlmsg_type,
 	return this->socket->send_ack(this->socket, hdr);
 }
 
+/**
+ * check for kernel features (currently only via version number)
+ */
+static void check_kernel_features(private_kernel_netlink_net_t *this)
+{
+	struct utsname utsname;
+	int a, b, c;
+
+	if (uname(&utsname) == 0)
+	{
+		switch(sscanf(utsname.release, "%d.%d.%d", &a, &b, &c))
+		{
+			case 3:
+				if (a == 2)
+				{
+					DBG2(DBG_KNL, "detected Linux %d.%d.%d, no support for "
+						 "RTA_PREFSRC for IPv6 routes", a, b, c);
+					break;
+				}
+				/* fall-through */
+			case 2:
+				/* only 3.x+ uses two part version numbers */
+				this->rta_prefsrc_for_ipv6 = TRUE;
+				break;
+			default:
+				break;
+		}
+	}
+}
+
 METHOD(kernel_net_t, destroy, void,
 	private_kernel_netlink_net_t *this)
 {
@@ -1753,10 +1788,6 @@ METHOD(kernel_net_t, destroy, void,
 					this->routing_table_prio);
 		manage_rule(this, RTM_DELRULE, AF_INET6, this->routing_table,
 					this->routing_table_prio);
-	}
-	if (this->job)
-	{
-		this->job->cancel(this->job);
 	}
 	if (this->socket_events > 0)
 	{
@@ -1831,6 +1862,8 @@ kernel_netlink_net_t *kernel_netlink_net_create()
 	timerclear(&this->last_route_reinstall);
 	timerclear(&this->last_roam);
 
+	check_kernel_features(this);
+
 	if (streq(hydra->daemon, "starter"))
 	{	/* starter has no threads, so we do not register for kernel events */
 		register_for_events = FALSE;
@@ -1881,9 +1914,10 @@ kernel_netlink_net_t *kernel_netlink_net_create()
 			return NULL;
 		}
 
-		this->job = callback_job_create_with_prio((callback_job_cb_t)receive_events,
-											this, NULL, NULL, JOB_PRIO_CRITICAL);
-		lib->processor->queue_job(lib->processor, (job_t*)this->job);
+		lib->processor->queue_job(lib->processor,
+			(job_t*)callback_job_create_with_prio(
+					(callback_job_cb_t)receive_events, this, NULL,
+					(callback_job_cancel_t)return_false, JOB_PRIO_CRITICAL));
 	}
 
 	if (init_address_list(this) != SUCCESS)

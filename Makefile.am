@@ -6,10 +6,15 @@ endif
 
 ACLOCAL_AMFLAGS = -I m4/config
 
-EXTRA_DIST = Doxyfile.in CREDITS Android.mk.in Android.mk
+EXTRA_DIST = Doxyfile.in LICENSE Android.mk.in Android.mk
 CLEANFILES = Doxyfile
 BUILT_SOURCES = Android.mk
 MAINTAINERCLEANFILES = Android.mk
+
+if USE_DEV_HEADERS
+config_includedir = $(ipseclibdir)/include
+nodist_config_include_HEADERS = config.h
+endif
 
 Android.mk :	Android.mk.in configure.in
 		sed \

@@ -67,11 +67,6 @@ struct private_tnc_pdp_t {
 	int ipv6;
 
 	/**
-	 * Callback job dispatching commands
-	 */
-	callback_job_t *job;
-
-	/**
 	 * RADIUS shared secret
 	 */
 	chunk_t secret;
@@ -87,9 +82,9 @@ struct private_tnc_pdp_t {
 	signer_t *signer;
 
 	/**
-	 * Random number generator for MS-MPPE salt values
+	 * Nonce generator for MS-MPPE salt values
 	 */
-	rng_t *rng;
+	nonce_gen_t *ng;
 
 	/**
 	 * List of registered TNC-PDP connections
@@ -221,7 +216,11 @@ static chunk_t encrypt_mppe_key(private_tnc_pdp_t *this, u_int8_t type,
 	a = chunk_create((u_char*)&(mppe_key->salt), sizeof(mppe_key->salt));
 	do
 	{
-		this->rng->get_bytes(this->rng, a.len, a.ptr);
+		if (!this->ng->get_nonce(this->ng, a.len, a.ptr))
+		{
+			free(data.ptr);
+			return chunk_empty;
+		}	
 		*a.ptr |= 0x80;
 	}
 	while (mppe_key->salt == *salt);
@@ -236,8 +235,12 @@ static chunk_t encrypt_mppe_key(private_tnc_pdp_t *this, u_int8_t type,
 	while (c < data.ptr + data.len)
 	{
 		/* b(i) = MD5(S + c(i-1)) */
-		this->hasher->get_hash(this->hasher, this->secret, NULL);
-		this->hasher->get_hash(this->hasher, seed, b);
+		if (!this->hasher->get_hash(this->hasher, this->secret, NULL) ||
+			!this->hasher->get_hash(this->hasher, seed, b))
+		{
+			free(data.ptr);
+			return chunk_empty;
+		}
 
 		/* c(i) = b(i) xor p(1) */
 		memxor(c, b, HASH_SIZE_MD5);
@@ -298,12 +301,13 @@ static void send_response(private_tnc_pdp_t *this, radius_message_t *request,
 		chunk_free(&data);
 	}
 	response->set_identifier(response, request->get_identifier(request));
-	response->sign(response, request->get_authenticator(request),
-				   this->secret, this->hasher, this->signer, NULL, TRUE);
-
-	DBG1(DBG_CFG, "sending RADIUS %N to client '%H'", radius_message_code_names,
-		 code, client);
-	send_message(this, response, client);
+	if (response->sign(response, request->get_authenticator(request),
+					   this->secret, this->hasher, this->signer, NULL, TRUE))
+	{
+		DBG1(DBG_CFG, "sending RADIUS %N to client '%H'",
+			 radius_message_code_names, code, client);
+		send_message(this, response, client);
+	}
 	response->destroy(response);
 }
 
@@ -546,10 +550,6 @@ static job_requeue_t receive(private_tnc_pdp_t *this)
 METHOD(tnc_pdp_t, destroy, void,
 	private_tnc_pdp_t *this)
 {
-	if (this->job)
-	{
-		this->job->cancel(this->job);
-	}
 	if (this->ipv4)
 	{
 		close(this->ipv4);
@@ -561,7 +561,7 @@ METHOD(tnc_pdp_t, destroy, void,
 	DESTROY_IF(this->server);
 	DESTROY_IF(this->signer);
 	DESTROY_IF(this->hasher);
-	DESTROY_IF(this->rng);
+	DESTROY_IF(this->ng);
 	DESTROY_IF(this->connections);
 	free(this);
 }
@@ -582,13 +582,13 @@ tnc_pdp_t *tnc_pdp_create(u_int16_t port)
 		.ipv6 = open_socket(AF_INET6, port),
 		.hasher = lib->crypto->create_hasher(lib->crypto, HASH_MD5),
 		.signer = lib->crypto->create_signer(lib->crypto, AUTH_HMAC_MD5_128),
-		.rng = lib->crypto->create_rng(lib->crypto, RNG_WEAK),
+		.ng = lib->crypto->create_nonce_gen(lib->crypto),
 		.connections = tnc_pdp_connections_create(),
 	);
 
-	if (!this->hasher || !this->signer || !this->rng)
+	if (!this->hasher || !this->signer || !this->ng)
 	{
-		DBG1(DBG_CFG, "RADIUS initialization failed, HMAC/MD5/RNG required");
+		DBG1(DBG_CFG, "RADIUS initialization failed, HMAC/MD5/NG required");
 		destroy(this);
 		return NULL;
 	}
@@ -626,7 +626,12 @@ tnc_pdp_t *tnc_pdp_create(u_int16_t port)
 		return NULL;
 	}
 	this->secret = chunk_create(secret, strlen(secret));
-	this->signer->set_key(this->signer, this->secret);
+	if (!this->signer->set_key(this->signer, this->secret))
+	{
+		DBG1(DBG_CFG, "could not set signer key");
+		destroy(this);
+		return NULL;
+	}
 
 	eap_type_str = lib->settings->get_str(lib->settings,
 						"%s.plugins.tnc-pdp.method", "ttls", charon->name);
@@ -639,9 +644,9 @@ tnc_pdp_t *tnc_pdp_create(u_int16_t port)
 	}
 	DBG1(DBG_IKE, "eap method %N selected", eap_type_names, this->type);
 
-	this->job = callback_job_create_with_prio((callback_job_cb_t)receive,
-										this, NULL, NULL, JOB_PRIO_CRITICAL);
-	lib->processor->queue_job(lib->processor, (job_t*)this->job);
+	lib->processor->queue_job(lib->processor,
+		(job_t*)callback_job_create_with_prio((callback_job_cb_t)receive, this,
+				NULL, (callback_job_cancel_t)return_false, JOB_PRIO_CRITICAL));
 
 	return &this->public;
 }

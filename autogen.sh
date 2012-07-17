@@ -14,6 +14,7 @@ esac
 
 $LIBTOOLIZE --force &&
 aclocal &&
+autoheader &&
 automake -a &&
 autoconf
 

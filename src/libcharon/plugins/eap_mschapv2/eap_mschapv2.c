@@ -281,7 +281,11 @@ static status_t NtPasswordHash(chunk_t password, chunk_t *password_hash)
 		DBG1(DBG_IKE, "EAP-MS-CHAPv2 failed, no MD4 hasher available");
 		return FAILED;
 	}
-	hasher->allocate_hash(hasher, password, password_hash);
+	if (!hasher->allocate_hash(hasher, password, password_hash))
+	{
+		hasher->destroy(hasher);
+		return FAILED;
+	}
 	hasher->destroy(hasher);
 	return SUCCESS;
 }
@@ -302,7 +306,11 @@ static status_t ChallengeHash(chunk_t peer_challenge, chunk_t server_challenge,
 		return FAILED;
 	}
 	concat = chunk_cata("ccc", peer_challenge, server_challenge, username);
-	hasher->allocate_hash(hasher, concat, challenge_hash);
+	if (!hasher->allocate_hash(hasher, concat, challenge_hash))
+	{
+		hasher->destroy(hasher);
+		return FAILED;
+	}
 	hasher->destroy(hasher);
 	/* we need only the first 8 octets */
 	challenge_hash->len = 8;
@@ -337,9 +345,15 @@ static status_t ChallengeResponse(chunk_t challenge_hash, chunk_t password_hash,
 	for (i = 0; i < 3; i++)
 	{
 		chunk_t expanded, encrypted;
+
 		expanded = ExpandDESKey(keys[i]);
-		crypter->set_key(crypter, expanded);
-		crypter->encrypt(crypter, challenge_hash, chunk_empty, &encrypted);
+		if (!crypter->set_key(crypter, expanded) ||
+			!crypter->encrypt(crypter, challenge_hash, chunk_empty, &encrypted))
+		{
+			chunk_clear(&expanded);
+			crypter->destroy(crypter);
+			return FAILED;
+		}
 		memcpy(&response->ptr[i * 8], encrypted.ptr, encrypted.len);
 		chunk_clear(&encrypted);
 		chunk_clear(&expanded);
@@ -376,10 +390,17 @@ static status_t AuthenticatorResponse(chunk_t password_hash_hash,
 	}
 
 	concat = chunk_cata("ccc", password_hash_hash, nt_response, magic1);
-	hasher->allocate_hash(hasher, concat, &digest);
+	if (!hasher->allocate_hash(hasher, concat, &digest))
+	{
+		hasher->destroy(hasher);
+		return FAILED;
+	}
 	concat = chunk_cata("ccc", digest, challenge_hash, magic2);
-	hasher->allocate_hash(hasher, concat, response);
-
+	if (!hasher->allocate_hash(hasher, concat, response))
+	{
+		hasher->destroy(hasher);
+		return FAILED;
+	}
 	hasher->destroy(hasher);
 	chunk_free(&digest);
 	return SUCCESS;
@@ -428,7 +449,9 @@ static status_t GenerateMSK(chunk_t password_hash_hash,
 	chunk_t keypad = chunk_from_chars(
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00);
-	chunk_t concat, master_key, master_receive_key, master_send_key;
+	char master_key[HASH_SIZE_SHA1];
+	char master_receive_key[HASH_SIZE_SHA1], master_send_key[HASH_SIZE_SHA1];
+	chunk_t concat, master;
 	hasher_t *hasher;
 
 	hasher = lib->crypto->create_hasher(lib->crypto, HASH_SHA1);
@@ -438,24 +461,22 @@ static status_t GenerateMSK(chunk_t password_hash_hash,
 		return FAILED;
 	}
 
+	master = chunk_create(master_key, 16);
 	concat = chunk_cata("ccc", password_hash_hash, nt_response, magic1);
-	hasher->allocate_hash(hasher, concat, &master_key);
-	master_key.len = 16;
+	concat = chunk_cata("cccc", master, shapad1, magic2, shapad2);
+	concat = chunk_cata("cccc", master, shapad1, magic3, shapad2);
+	if (!hasher->get_hash(hasher, concat, master_key) ||
+		!hasher->get_hash(hasher, concat, master_receive_key) ||
+		!hasher->get_hash(hasher, concat, master_send_key))
+	{
+		hasher->destroy(hasher);
+		return FAILED;
+	}
 
-	concat = chunk_cata("cccc", master_key, shapad1, magic2, shapad2);
-	hasher->allocate_hash(hasher, concat, &master_receive_key);
-	master_receive_key.len = 16;
-
-	concat = chunk_cata("cccc", master_key, shapad1, magic3, shapad2);
-	hasher->allocate_hash(hasher, concat, &master_send_key);
-	master_send_key.len = 16;
-
-	*msk = chunk_cat("cccc", master_receive_key, master_send_key, keypad, keypad);
+	*msk = chunk_cat("cccc", chunk_create(master_receive_key, 16),
+					 chunk_create(master_send_key, 16), keypad, keypad);
 
 	hasher->destroy(hasher);
-	chunk_free(&master_key);
-	chunk_free(&master_receive_key);
-	chunk_free(&master_send_key);
 	return SUCCESS;
 }
 
@@ -577,12 +598,12 @@ METHOD(eap_method_t, initiate_server, status_t,
 	u_int16_t len = CHALLENGE_PAYLOAD_LEN + sizeof(MSCHAPV2_HOST_NAME) - 1;
 
 	rng = lib->crypto->create_rng(lib->crypto, RNG_WEAK);
-	if (!rng)
+	if (!rng || !rng->allocate_bytes(rng, CHALLENGE_LEN, &this->challenge))
 	{
-		DBG1(DBG_IKE, "EAP-MS-CHAPv2 failed, no RNG");
+		DBG1(DBG_IKE, "EAP-MS-CHAPv2 failed, no challenge");
+		DESTROY_IF(rng);
 		return FAILED;
 	}
-	rng->allocate_bytes(rng, CHALLENGE_LEN, &this->challenge);
 	rng->destroy(rng);
 
 	eap = alloca(len);
@@ -670,14 +691,14 @@ static status_t process_peer_challenge(private_eap_mschapv2_t *this,
 	this->mschapv2id = eap->ms_chapv2_id;
 	this->challenge = chunk_clone(chunk_create(cha->challenge, CHALLENGE_LEN));
 
+	peer_challenge = chunk_alloca(CHALLENGE_LEN);
 	rng = lib->crypto->create_rng(lib->crypto, RNG_WEAK);
-	if (!rng)
+	if (!rng || !rng->get_bytes(rng, CHALLENGE_LEN, peer_challenge.ptr))
 	{
-		DBG1(DBG_IKE, "EAP-MS-CHAPv2 failed, no RNG");
+		DBG1(DBG_IKE, "EAP-MS-CHAPv2 failed, allocating challenge failed");
+		DESTROY_IF(rng);
 		return FAILED;
 	}
-	peer_challenge = chunk_alloca(CHALLENGE_LEN);
-	rng->get_bytes(rng, CHALLENGE_LEN, peer_challenge.ptr);
 	rng->destroy(rng);
 
 	if (!get_nt_hash(this, this->peer, this->server, &nt_hash))
@@ -964,12 +985,12 @@ static status_t process_server_retry(private_eap_mschapv2_t *this,
 	DBG1(DBG_IKE, "EAP-MS-CHAPv2 verification failed, retry (%d)", this->retries);
 
 	rng = lib->crypto->create_rng(lib->crypto, RNG_WEAK);
-	if (!rng)
+	if (!rng || !rng->get_bytes(rng, CHALLENGE_LEN, this->challenge.ptr))
 	{
-		DBG1(DBG_IKE, "EAP-MS-CHAPv2 failed, no RNG");
+		DBG1(DBG_IKE, "EAP-MS-CHAPv2 failed, allocating challenge failed");
+		DESTROY_IF(rng);
 		return FAILED;
 	}
-	rng->get_bytes(rng, CHALLENGE_LEN, this->challenge.ptr);
 	rng->destroy(rng);
 
 	chunk_free(&this->nt_response);

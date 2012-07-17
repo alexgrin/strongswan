@@ -104,7 +104,10 @@ static chunk_t generate_natd_hash(private_ike_natd_t *this,
 
 	/*  natd_hash = SHA1( spi_i | spi_r | address | port ) */
 	natd_chunk = chunk_cat("cccc", spi_i_chunk, spi_r_chunk, addr_chunk, port_chunk);
-	this->hasher->allocate_hash(this->hasher, natd_chunk, &natd_hash);
+	if (!this->hasher->allocate_hash(this->hasher, natd_chunk, &natd_hash))
+	{
+		natd_hash = chunk_empty;
+	}
 	DBG3(DBG_IKE, "natd_chunk %B", &natd_chunk);
 	DBG3(DBG_IKE, "natd_hash %B", &natd_hash);
 
@@ -121,12 +124,12 @@ static chunk_t generate_natd_hash_faked(private_ike_natd_t *this)
 	chunk_t chunk;
 
 	rng = lib->crypto->create_rng(lib->crypto, RNG_WEAK);
-	if (!rng)
+	if (!rng || !rng->allocate_bytes(rng, HASH_SIZE_SHA1, &chunk))
 	{
 		DBG1(DBG_IKE, "unable to get random bytes for NATD fake");
+		DESTROY_IF(rng);
 		return chunk_empty;
 	}
-	rng->allocate_bytes(rng, HASH_SIZE_SHA1, &chunk);
 	rng->destroy(rng);
 	return chunk;
 }
@@ -151,6 +154,10 @@ static notify_payload_t *build_natd_payload(private_ike_natd_t *this,
 	else
 	{
 		hash = generate_natd_hash(this, ike_sa_id, host);
+	}
+	if (!hash.len)
+	{
+		return NULL;
 	}
 	notify = notify_payload_create(NOTIFY);
 	notify->set_notify_type(notify, type);
@@ -298,7 +305,10 @@ METHOD(task_t, build_i, status_t,
 	/* destination is always set */
 	host = message->get_destination(message);
 	notify = build_natd_payload(this, NAT_DETECTION_DESTINATION_IP, host);
-	message->add_payload(message, (payload_t*)notify);
+	if (notify)
+	{
+		message->add_payload(message, (payload_t*)notify);
+	}
 
 	/* source may be any, we have 3 possibilities to get our source address:
 	 * 1. It is defined in the config => use the one of the IKE_SA
@@ -306,10 +316,13 @@ METHOD(task_t, build_i, status_t,
 	 * 3. Include all possbile addresses
 	 */
 	host = message->get_source(message);
-	if (!host->is_anyaddr(host))
-	{	/* 1. */
+	if (!host->is_anyaddr(host) || ike_cfg->force_encap(ike_cfg))
+	{	/* 1. or if we force UDP encap, as it doesn't matter if it's %any */
 		notify = build_natd_payload(this, NAT_DETECTION_SOURCE_IP, host);
-		message->add_payload(message, (payload_t*)notify);
+		if (notify)
+		{
+			message->add_payload(message, (payload_t*)notify);
+		}
 	}
 	else
 	{
@@ -319,7 +332,10 @@ METHOD(task_t, build_i, status_t,
 		{	/* 2. */
 			host->set_port(host, ike_cfg->get_my_port(ike_cfg));
 			notify = build_natd_payload(this, NAT_DETECTION_SOURCE_IP, host);
-			message->add_payload(message, (payload_t*)notify);
+			if (notify)
+			{
+				message->add_payload(message, (payload_t*)notify);
+			}
 			host->destroy(host);
 		}
 		else
@@ -333,7 +349,10 @@ METHOD(task_t, build_i, status_t,
 				host->set_port(host, ike_cfg->get_my_port(ike_cfg));
 				notify = build_natd_payload(this, NAT_DETECTION_SOURCE_IP, host);
 				host->destroy(host);
-				message->add_payload(message, (payload_t*)notify);
+				if (notify)
+				{
+					message->add_payload(message, (payload_t*)notify);
+				}
 			}
 			enumerator->destroy(enumerator);
 		}
@@ -365,11 +384,16 @@ METHOD(task_t, build_r, status_t,
 		/* initiator seems to support NAT detection, add response */
 		me = message->get_source(message);
 		notify = build_natd_payload(this, NAT_DETECTION_SOURCE_IP, me);
-		message->add_payload(message, (payload_t*)notify);
-
+		if (notify)
+		{
+			message->add_payload(message, (payload_t*)notify);
+		}
 		other = message->get_destination(message);
 		notify = build_natd_payload(this, NAT_DETECTION_DESTINATION_IP, other);
-		message->add_payload(message, (payload_t*)notify);
+		if (notify)
+		{
+			message->add_payload(message, (payload_t*)notify);
+		}
 	}
 	return SUCCESS;
 }

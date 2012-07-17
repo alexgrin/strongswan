@@ -328,7 +328,12 @@ static bool add_nonce(private_quick_mode_t *this, chunk_t *nonce,
 		DBG1(DBG_IKE, "no nonce generator found to create nonce");
 		return FALSE;
 	}
-	nonceg->allocate_nonce(nonceg, NONCE_SIZE, nonce);
+	if (!nonceg->allocate_nonce(nonceg, NONCE_SIZE, nonce))
+	{
+		DBG1(DBG_IKE, "nonce allocation failed");
+		nonceg->destroy(nonceg);
+		return FALSE;
+	}
 	nonceg->destroy(nonceg);
 
 	nonce_payload = nonce_payload_create(NONCE_V1);
@@ -964,11 +969,15 @@ METHOD(task_t, process_r, status_t,
 			}
 			if (!install(this))
 			{
-				this->ike_sa->flush_queue(this->ike_sa, TASK_QUEUE_PASSIVE);
-				this->ike_sa->queue_task(this->ike_sa,
-					(task_t*)quick_delete_create(this->ike_sa,
+				ike_sa_t *ike_sa = this->ike_sa;
+				task_t *task;
+
+				task = (task_t*)quick_delete_create(this->ike_sa,
 								this->proposal->get_protocol(this->proposal),
-								this->spi_i, TRUE, TRUE));
+								this->spi_i, TRUE, TRUE);
+				/* flush_queue() destroys the current task */
+				ike_sa->flush_queue(ike_sa, TASK_QUEUE_PASSIVE);
+				ike_sa->queue_task(ike_sa, task);
 				return ALREADY_DONE;
 			}
 			return SUCCESS;

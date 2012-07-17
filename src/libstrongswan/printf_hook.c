@@ -86,21 +86,17 @@ static printf_hook_handler_t *printf_hooks[NUM_HANDLERS];
 static int custom_print(FILE *stream, const struct printf_info *info,
 						const void *const *args)
 {
-	int written;
-	char buf[PRINTF_BUF_LEN];
 	printf_hook_spec_t spec;
 	printf_hook_handler_t *handler = printf_hooks[SPEC_TO_INDEX(info->spec)];
+	printf_hook_data_t data = {
+		.stream = stream,
+	};
 
 	spec.hash = info->alt;
 	spec.minus = info->left;
 	spec.width = info->width;
 
-	written = handler->hook(buf, sizeof(buf), &spec, args);
-	if (written > 0)
-	{
-		ignore_result(fwrite(buf, 1, written, stream));
-	}
-	return written;
+	return handler->hook(&data, &spec, args);
 }
 
 /**
@@ -145,11 +141,14 @@ static int custom_arginfo(const struct printf_info *info, size_t n, int *argtype
  */
 static int custom_fmt_cb(Vstr_base *base, size_t pos, Vstr_fmt_spec *fmt_spec)
 {
-	int i, written;
-	char buf[PRINTF_BUF_LEN];
+	int i;
 	const void *args[ARGS_MAX];
 	printf_hook_spec_t spec;
 	printf_hook_handler_t *handler = printf_hooks[SPEC_TO_INDEX(fmt_spec->name[0])];
+	printf_hook_data_t data = {
+		.base = base,
+		.pos = pos,
+	};
 
 	for (i = 0; i < handler->numargs; i++)
 	{
@@ -168,11 +167,7 @@ static int custom_fmt_cb(Vstr_base *base, size_t pos, Vstr_fmt_spec *fmt_spec)
 	spec.minus = fmt_spec->fmt_minus;
 	spec.width = fmt_spec->fmt_field_width;
 
-	written = handler->hook(buf, sizeof(buf), &spec, args);
-	if (written > 0)
-	{
-		vstr_add_buf(base, pos, buf, written);
-	}
+	handler->hook(&data, &spec, args);
 	return 1;
 }
 

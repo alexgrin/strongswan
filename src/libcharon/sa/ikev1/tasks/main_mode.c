@@ -493,12 +493,6 @@ METHOD(task_t, build_r, status_t,
 			{
 				return send_notify(this, AUTHENTICATION_FAILED);
 			}
-			if (charon->ike_sa_manager->check_uniqueness(charon->ike_sa_manager,
-														 this->ike_sa, FALSE))
-			{
-				DBG1(DBG_IKE, "cancelling Main Mode due to uniqueness policy");
-				return send_notify(this, AUTHENTICATION_FAILED);
-			}
 
 			switch (this->method)
 			{
@@ -511,9 +505,16 @@ METHOD(task_t, build_r, status_t,
 				case AUTH_XAUTH_RESP_PSK:
 				case AUTH_XAUTH_RESP_RSA:
 				case AUTH_HYBRID_RESP_RSA:
-					/* TODO-IKEv1: not yet supported */
-					return FAILED;
+					/* wait for XAUTH request */
+					break;
 				default:
+					if (charon->ike_sa_manager->check_uniqueness(
+								charon->ike_sa_manager, this->ike_sa, FALSE))
+					{
+						DBG1(DBG_IKE, "cancelling Main Mode due to uniqueness "
+							 "policy");
+						return send_notify(this, AUTHENTICATION_FAILED);
+					}
 					if (!establish(this))
 					{
 						return send_notify(this, AUTHENTICATION_FAILED);
@@ -521,8 +522,15 @@ METHOD(task_t, build_r, status_t,
 					lib->processor->queue_job(lib->processor, (job_t*)
 									adopt_children_job_create(
 										this->ike_sa->get_id(this->ike_sa)));
-					return SUCCESS;
+					break;
 			}
+			if (this->peer_cfg->get_pool(this->peer_cfg) == NULL &&
+				this->peer_cfg->get_virtual_ip(this->peer_cfg))
+			{
+				this->ike_sa->queue_task(this->ike_sa,
+							(task_t*)mode_config_create(this->ike_sa, TRUE));
+			}
+			return SUCCESS;
 		}
 		default:
 			return FAILED;
@@ -622,12 +630,6 @@ METHOD(task_t, process_i, status_t,
 					 "cancelling");
 				return send_delete(this);
 			}
-			if (charon->ike_sa_manager->check_uniqueness(charon->ike_sa_manager,
-														 this->ike_sa, FALSE))
-			{
-				DBG1(DBG_IKE, "cancelling Main Mode due to uniqueness policy");
-				return send_delete(this);
-			}
 
 			switch (this->method)
 			{
@@ -639,9 +641,17 @@ METHOD(task_t, process_i, status_t,
 				case AUTH_XAUTH_RESP_PSK:
 				case AUTH_XAUTH_RESP_RSA:
 				case AUTH_HYBRID_RESP_RSA:
-					/* TODO-IKEv1: not yet */
-					return FAILED;
+					this->ike_sa->queue_task(this->ike_sa,
+									(task_t*)xauth_create(this->ike_sa, TRUE));
+					return SUCCESS;
 				default:
+					if (charon->ike_sa_manager->check_uniqueness(
+								charon->ike_sa_manager, this->ike_sa, FALSE))
+					{
+						DBG1(DBG_IKE, "cancelling Main Mode due to uniqueness "
+							 "policy");
+						return send_delete(this);
+					}
 					if (!establish(this))
 					{
 						return send_delete(this);

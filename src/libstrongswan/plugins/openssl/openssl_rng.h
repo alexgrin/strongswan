@@ -7,10 +7,10 @@
  * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
  * copies of the Software, and to permit persons to whom the Software is
  * furnished to do so, subject to the following conditions:
-
+ *
  * The above copyright notice and this permission notice shall be included in
  * all copies or substantial portions of the Software.
-
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -36,6 +36,7 @@ typedef struct openssl_rng_t openssl_rng_t;
  * Implementation of random number using OpenSSL.
  */
 struct openssl_rng_t {
+
 	/**
 	 * Implements rng_t interface.
 	 */
@@ -45,7 +46,7 @@ struct openssl_rng_t {
 /**
  * Constructor to create openssl_rng_t.
  *
- * @param quality		quality of randomness
+ * @param quality	quality of randomness
  * @return			openssl_rng_t
  */
 openssl_rng_t *openssl_rng_create(rng_quality_t quality);

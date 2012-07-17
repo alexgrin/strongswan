@@ -90,8 +90,10 @@ struct crypter_t {
 	 * @param data			data to encrypt
 	 * @param iv			initializing vector
 	 * @param encrypted		chunk to allocate encrypted data, or NULL
+	 * @return				TRUE if encryption successful
 	 */
-	void (*encrypt) (crypter_t *this, chunk_t data, chunk_t iv,
+	__attribute__((warn_unused_result))
+	bool (*encrypt) (crypter_t *this, chunk_t data, chunk_t iv,
 					 chunk_t *encrypted);
 
 	/**
@@ -104,8 +106,10 @@ struct crypter_t {
 	 * @param data			data to decrypt
 	 * @param iv			initializing vector
 	 * @param encrypted		chunk to allocate decrypted data, or NULL
+	 * @return				TRUE if decryption successful
 	 */
-	void (*decrypt) (crypter_t *this, chunk_t data, chunk_t iv,
+	__attribute__((warn_unused_result))
+	bool (*decrypt) (crypter_t *this, chunk_t data, chunk_t iv,
 					 chunk_t *decrypted);
 
 	/**
@@ -143,8 +147,10 @@ struct crypter_t {
 	 * The length of the key must match get_key_size().
 	 *
 	 * @param key			key to set
+	 * @return				TRUE if key set successfully
 	 */
-	void (*set_key) (crypter_t *this, chunk_t key);
+	__attribute__((warn_unused_result))
+	bool (*set_key) (crypter_t *this, chunk_t key);
 
 	/**
 	 * Destroys a crypter_t object.

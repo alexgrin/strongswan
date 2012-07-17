@@ -421,13 +421,13 @@ end:
 
 				algorithm = hasher_algorithm_from_oid(digest_alg);
 				hasher = lib->crypto->create_hasher(lib->crypto, algorithm);
-				if (hasher == NULL)
+				if (!hasher || !hasher->allocate_hash(hasher, this->data, &hash))
 				{
+					DESTROY_IF(hasher);
 					DBG1(DBG_LIB, "hash algorithm %N not supported",
 						 hash_algorithm_names, algorithm);
 					return FALSE;
 				}
-				hasher->allocate_hash(hasher, this->data, &hash);
 				hasher->destroy(hasher);
 				DBG3(DBG_LIB, "hash: %B", &hash);
 
@@ -638,8 +638,12 @@ end:
 	success = FALSE;
 
 	/* decrypt the content */
-	crypter->set_key(crypter, symmetric_key);
-	crypter->decrypt(crypter, encrypted_content, iv, &this->data);
+	if (!crypter->set_key(crypter, symmetric_key) ||
+		!crypter->decrypt(crypter, encrypted_content, iv, &this->data))
+	{
+		success = FALSE;
+		goto failed;
+	}
 	DBG4(DBG_LIB, "decrypted content with padding: %B", &this->data);
 
 	/* remove the padding */
@@ -787,12 +791,24 @@ METHOD(pkcs7_t, build_envelopedData, bool,
 		rng_t *rng;
 
 		rng = lib->crypto->create_rng(lib->crypto, RNG_TRUE);
-		rng->allocate_bytes(rng, crypter->get_key_size(crypter), &symmetricKey);
+		if (!rng || !rng->allocate_bytes(rng, crypter->get_key_size(crypter),
+										 &symmetricKey))
+		{
+			DBG1(DBG_LIB, "  failed to allocate symmetric encryption key");
+			DESTROY_IF(rng);
+			return FALSE;
+		}
 		DBG4(DBG_LIB, "  symmetric encryption key: %B", &symmetricKey);
 		rng->destroy(rng);
 
 		rng = lib->crypto->create_rng(lib->crypto, RNG_WEAK);
-		rng->allocate_bytes(rng, crypter->get_iv_size(crypter), &iv);
+		if (!rng || !rng->allocate_bytes(rng, crypter->get_iv_size(crypter),
+										 &iv))
+		{
+			DBG1(DBG_LIB, "  failed to allocate initialization vector");
+			DESTROY_IF(rng);
+			return FALSE;
+		}
 		DBG4(DBG_LIB, "  initialization vector: %B", &iv);
 		rng->destroy(rng);
 	}
@@ -818,8 +834,15 @@ METHOD(pkcs7_t, build_envelopedData, bool,
 	DBG3(DBG_LIB, "  padded unencrypted data: %B", &in);
 
 	/* symmetric encryption of data object */
-	crypter->set_key(crypter, symmetricKey);
-	crypter->encrypt(crypter, in, iv, &out);
+	if (!crypter->set_key(crypter, symmetricKey) ||
+		!crypter->encrypt(crypter, in, iv, &out))
+	{
+		crypter->destroy(crypter);
+		chunk_clear(&in);
+		chunk_clear(&symmetricKey);
+		chunk_free(&iv);
+		return FALSE;
+	}
 	crypter->destroy(crypter);
 	chunk_clear(&in);
 	DBG3(DBG_LIB, "  encrypted data: %B", &out);
@@ -898,13 +921,14 @@ METHOD(pkcs7_t, build_signedData, bool,
 			time_t now;
 
 			hasher = lib->crypto->create_hasher(lib->crypto, alg);
-			if (hasher == NULL)
+			if (!hasher ||
+				!hasher->allocate_hash(hasher, this->data, &messageDigest))
 			{
+				DESTROY_IF(hasher);
 				DBG1(DBG_LIB, "  hash algorithm %N not support",
 					 hash_algorithm_names, alg);
 				return FALSE;
 			}
-			hasher->allocate_hash(hasher, this->data, &messageDigest);
 			hasher->destroy(hasher);
 			this->attributes->set_attribute(this->attributes,
 									OID_PKCS9_MESSAGE_DIGEST,

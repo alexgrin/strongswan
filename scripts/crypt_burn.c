@@ -1,3 +1,17 @@
+/*
+ * Copyright (C) 2010 Martin Willi
+ * Copyright (C) 2010 revosec AG
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the
+ * Free Software Foundation; either version 2 of the License, or (at your
+ * option) any later version.  See <http://www.fsf.org/copyleft/gpl.txt>.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+ * or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+ * for more details.
+ */
 
 #include <stdio.h>
 #include <library.h>
@@ -56,10 +70,14 @@ int main(int argc, char *argv[])
 		}
 		while (TRUE)
 		{
-			aead->encrypt(aead,
+			if (!aead->encrypt(aead,
 				chunk_create(buffer, sizeof(buffer) - aead->get_icv_size(aead)),
 				chunk_from_thing(assoc),
-				chunk_create(iv, aead->get_iv_size(aead)), NULL);
+				chunk_create(iv, aead->get_iv_size(aead)), NULL))
+			{
+				fprintf(stderr, "aead encryption failed!\n");
+				return 1;
+			}
 			if (!aead->decrypt(aead, chunk_create(buffer, sizeof(buffer)),
 				chunk_from_thing(assoc),
 				chunk_create(iv, aead->get_iv_size(aead)), NULL))
@@ -86,12 +104,18 @@ int main(int argc, char *argv[])
 
 		while (i--)
 		{
-			crypter->encrypt(crypter,
-				chunk_create(buffer, sizeof(buffer) / bs * bs),
-				chunk_create(iv, crypter->get_iv_size(crypter)), NULL);
-			crypter->decrypt(crypter,
-				chunk_create(buffer, sizeof(buffer) / bs * bs),
-				chunk_create(iv, crypter->get_iv_size(crypter)), NULL);
+			if (!crypter->encrypt(crypter,
+					chunk_create(buffer, sizeof(buffer) / bs * bs),
+					chunk_create(iv, crypter->get_iv_size(crypter)), NULL))
+			{
+				continue;
+			}
+			if (!crypter->decrypt(crypter,
+					chunk_create(buffer, sizeof(buffer) / bs * bs),
+					chunk_create(iv, crypter->get_iv_size(crypter)), NULL))
+			{
+				continue;
+			}
 			if (limit && ++i == limit)
 			{
 				break;

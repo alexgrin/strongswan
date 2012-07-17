@@ -1,5 +1,6 @@
 /*
- * Copyright (C) 2011 Andreas Steffen, HSR Hochschule fuer Technik Rapperswil
+ * Copyright (C) 2011-2012 Andreas Steffen
+ * HSR Hochschule fuer Technik Rapperswil
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -62,6 +63,20 @@ D attached to the state
 	 * @return				TRUE if set, FALSE otherwise
 	 */
 	void (*set_flags)(imc_state_t *this, bool has_long, bool has_excl);
+
+	/**
+	 * Set the maximum size of a PA-TNC message for this TNCCS connection
+	 *
+	 * @max_msg_len			maximum size of a PA-TNC message
+	 */
+	void (*set_max_msg_len)(imc_state_t *this, u_int32_t max_msg_len);
+
+	/**
+	 * Get the maximum size of a PA-TNC message for this TNCCS connection
+	 *
+	 * @return				maximum size of a PA-TNC message
+	 */
+	u_int32_t (*get_max_msg_len)(imc_state_t *this);
 
 	/**
 	 * Change the connection state

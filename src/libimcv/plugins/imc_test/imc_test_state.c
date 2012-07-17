@@ -1,5 +1,6 @@
 /*
- * Copyright (C) 2011 Andreas Steffen, HSR Hochschule fuer Technik Rapperswil
+ * Copyright (C) 2011-2012 Andreas Steffen
+ * HSR Hochschule fuer Technik Rapperswil
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -50,9 +51,19 @@ struct private_imc_test_state_t {
 	bool has_excl;
 
 	/**
+	 * Maximum PA-TNC message size for this TNCCS connection
+	 */
+	u_int32_t max_msg_len;
+
+	/**
 	 * Command to transmit to IMV
 	 */
 	char *command;
+
+	/**
+	 * Size of the dummy attribute value to transmit to IMV
+	 */
+	int dummy_size;
 
 	/**
 	 * Is it the first handshake?
@@ -91,6 +102,18 @@ METHOD(imc_state_t, set_flags, void,
 	this->has_excl = has_excl;
 }
 
+METHOD(imc_state_t, set_max_msg_len, void,
+	private_imc_test_state_t *this, u_int32_t max_msg_len)
+{
+	this->max_msg_len = max_msg_len;
+}
+
+METHOD(imc_state_t, get_max_msg_len, u_int32_t,
+	private_imc_test_state_t *this)
+{
+	return this->max_msg_len;
+}
+
 METHOD(imc_state_t, change_state, void,
 	private_imc_test_state_t *this, TNC_ConnectionState new_state)
 {
@@ -120,6 +143,13 @@ METHOD(imc_test_state_t, set_command, void,
 	free(old_command);
 }
 
+METHOD(imc_test_state_t, get_dummy_size, int,
+	private_imc_test_state_t *this)
+{
+	return this->dummy_size;
+}
+
+
 METHOD(imc_test_state_t, is_first_handshake, bool,
 	private_imc_test_state_t *this)
 {
@@ -146,7 +176,7 @@ METHOD(imc_test_state_t, do_handshake_retry, bool,
  * Described in header.
  */
 imc_state_t *imc_test_state_create(TNC_ConnectionID connection_id,
-								   char *command, bool retry)
+								   char *command, int dummy_size, bool retry)
 {
 	private_imc_test_state_t *this;
 
@@ -157,22 +187,25 @@ imc_state_t *imc_test_state_create(TNC_ConnectionID connection_id,
 				.has_long = _has_long,
 				.has_excl = _has_excl,
 				.set_flags = _set_flags,
+				.set_max_msg_len = _set_max_msg_len,
+				.get_max_msg_len = _get_max_msg_len,
 				.change_state = _change_state,
 				.destroy = _destroy,
 			},
 			.get_command = _get_command,
 			.set_command = _set_command,
+			.get_dummy_size = _get_dummy_size,
 			.is_first_handshake = _is_first_handshake,
 			.do_handshake_retry = _do_handshake_retry,
 		},
 		.state = TNC_CONNECTION_STATE_CREATE,
 		.connection_id = connection_id,
 		.command = strdup(command),
+		.dummy_size = dummy_size,
 		.first_handshake = TRUE,
 		.handshake_retry = retry,
 	);
 	
 	return &this->public.interface;
 }
-
 

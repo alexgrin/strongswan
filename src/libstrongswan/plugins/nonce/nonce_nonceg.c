@@ -35,16 +35,16 @@ struct private_nonce_nonceg_t {
 	rng_t* rng;
 };
 
-METHOD(nonce_gen_t, get_nonce, void,
+METHOD(nonce_gen_t, get_nonce, bool,
 	private_nonce_nonceg_t *this, size_t size, u_int8_t *buffer)
 {
-	this->rng->get_bytes(this->rng, size, buffer);
+	return this->rng->get_bytes(this->rng, size, buffer);
 }
 
-METHOD(nonce_gen_t, allocate_nonce, void,
+METHOD(nonce_gen_t, allocate_nonce, bool,
 	private_nonce_nonceg_t *this, size_t size, chunk_t *chunk)
 {
-	this->rng->allocate_bytes(this->rng, size, chunk);
+	return this->rng->allocate_bytes(this->rng, size, chunk);
 }
 
 METHOD(nonce_gen_t, destroy, void,

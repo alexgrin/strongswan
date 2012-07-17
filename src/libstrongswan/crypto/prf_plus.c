@@ -57,7 +57,7 @@ struct private_prf_plus_t {
 	chunk_t buffer;
 };
 
-METHOD(prf_plus_t, get_bytes, void,
+METHOD(prf_plus_t, get_bytes, bool,
 	private_prf_plus_t *this, size_t length, u_int8_t *buffer)
 {
 	size_t round, written = 0;
@@ -66,17 +66,27 @@ METHOD(prf_plus_t, get_bytes, void,
 	{
 		if (this->buffer.len == this->used)
 		{	/* buffer used, get next round */
-			this->prf->get_bytes(this->prf, this->buffer, NULL);
+			if (!this->prf->get_bytes(this->prf, this->buffer, NULL))
+			{
+				return FALSE;
+			}
 			if (this->counter)
 			{
-				this->prf->get_bytes(this->prf, this->seed, NULL);
-				this->prf->get_bytes(this->prf, chunk_from_thing(this->counter),
-									 this->buffer.ptr);
+				if (!this->prf->get_bytes(this->prf, this->seed, NULL) ||
+					!this->prf->get_bytes(this->prf,
+							chunk_from_thing(this->counter), this->buffer.ptr))
+				{
+					return FALSE;
+				}
 				this->counter++;
 			}
 			else
 			{
-				this->prf->get_bytes(this->prf, this->seed, this->buffer.ptr);
+				if (!this->prf->get_bytes(this->prf, this->seed,
+										  this->buffer.ptr))
+				{
+					return FALSE;
+				}
 			}
 			this->used = 0;
 		}
@@ -87,20 +97,19 @@ METHOD(prf_plus_t, get_bytes, void,
 		this->used += round;
 		written += round;
 	}
+	return TRUE;
 }
 
-METHOD(prf_plus_t, allocate_bytes, void,
+METHOD(prf_plus_t, allocate_bytes, bool,
 	private_prf_plus_t *this, size_t length, chunk_t *chunk)
 {
 	if (length)
 	{
 		*chunk = chunk_alloc(length);
-		get_bytes(this, length, chunk->ptr);
+		return get_bytes(this, length, chunk->ptr);
 	}
-	else
-	{
-		*chunk = chunk_empty;
-	}
+	*chunk = chunk_empty;
+	return TRUE;
 }
 
 METHOD(prf_plus_t, destroy, void,
@@ -132,14 +141,22 @@ prf_plus_t *prf_plus_create(prf_t *prf, bool counter, chunk_t seed)
 	if (counter)
 	{
 		this->counter = 0x01;
-		this->prf->get_bytes(this->prf, this->seed, NULL);
-		this->prf->get_bytes(this->prf, chunk_from_thing(this->counter),
-							 this->buffer.ptr);
+		if (!this->prf->get_bytes(this->prf, this->seed, NULL) ||
+			!this->prf->get_bytes(this->prf, chunk_from_thing(this->counter),
+								  this->buffer.ptr))
+		{
+			destroy(this);
+			return NULL;
+		}
 		this->counter++;
 	}
 	else
 	{
-		this->prf->get_bytes(this->prf, this->seed, this->buffer.ptr);
+		if (!this->prf->get_bytes(this->prf, this->seed, this->buffer.ptr))
+		{
+			destroy(this);
+			return NULL;
+		}
 	}
 
 	return &this->public;

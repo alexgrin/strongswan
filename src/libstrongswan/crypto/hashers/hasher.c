@@ -68,9 +68,71 @@ hash_algorithm_t hasher_algorithm_from_oid(int oid)
 /*
  * Described in header.
  */
-hash_algorithm_t hasher_algorithm_from_integrity(integrity_algorithm_t integrity)
+hash_algorithm_t hasher_algorithm_from_prf(pseudo_random_function_t alg)
 {
-	switch (integrity)
+	switch (alg)
+	{
+		case PRF_HMAC_MD5:
+			return HASH_MD5;
+		case PRF_HMAC_SHA1:
+		case PRF_FIPS_SHA1_160:
+		case PRF_KEYED_SHA1:
+			return HASH_SHA1;
+		case PRF_HMAC_SHA2_256:
+			return HASH_SHA256;
+		case PRF_HMAC_SHA2_384:
+			return HASH_SHA384;
+		case PRF_HMAC_SHA2_512:
+			return HASH_SHA512;
+		case PRF_HMAC_TIGER:
+		case PRF_AES128_XCBC:
+		case PRF_AES128_CMAC:
+		case PRF_FIPS_DES:
+		case PRF_CAMELLIA128_XCBC:
+		case PRF_UNDEFINED:
+			break;
+	}
+	return HASH_UNKNOWN;
+}
+
+/*
+ * Described in header.
+ */
+hash_algorithm_t hasher_algorithm_from_integrity(integrity_algorithm_t alg,
+												 size_t *length)
+{
+	if (length)
+	{
+		switch (alg)
+		{
+			case AUTH_HMAC_MD5_96:
+			case AUTH_HMAC_SHA1_96:
+			case AUTH_HMAC_SHA2_256_96:
+				*length = 12;
+				break;
+			case AUTH_HMAC_MD5_128:
+			case AUTH_HMAC_SHA1_128:
+			case AUTH_HMAC_SHA2_256_128:
+				*length = 16;
+				break;
+			case AUTH_HMAC_SHA1_160:
+				*length = 20;
+				break;
+			case AUTH_HMAC_SHA2_384_192:
+				*length = 24;
+				break;
+			case AUTH_HMAC_SHA2_256_256:
+			case AUTH_HMAC_SHA2_512_256:
+				*length = 32;
+				break;
+			case AUTH_HMAC_SHA2_384_384:
+				*length = 48;
+				break;
+			default:
+				break;
+		}
+	}
+	switch (alg)
 	{
 		case AUTH_HMAC_MD5_96:
 		case AUTH_HMAC_MD5_128:

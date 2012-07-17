@@ -96,35 +96,39 @@ METHOD(hasher_t, get_hash_size, size_t,
 	return this->hasher->md_size;
 }
 
-METHOD(hasher_t, reset, void,
+METHOD(hasher_t, reset, bool,
 	private_openssl_hasher_t *this)
 {
-	EVP_DigestInit_ex(this->ctx, this->hasher, NULL);
+	return EVP_DigestInit_ex(this->ctx, this->hasher, NULL) == 1;
 }
 
-METHOD(hasher_t, get_hash, void,
+METHOD(hasher_t, get_hash, bool,
 	private_openssl_hasher_t *this, chunk_t chunk, u_int8_t *hash)
 {
-	EVP_DigestUpdate(this->ctx, chunk.ptr, chunk.len);
+	if (EVP_DigestUpdate(this->ctx, chunk.ptr, chunk.len) != 1)
+	{
+		return FALSE;
+	}
 	if (hash)
 	{
-		EVP_DigestFinal_ex(this->ctx, hash, NULL);
-		reset(this);
+		if (EVP_DigestFinal_ex(this->ctx, hash, NULL) != 1)
+		{
+			return FALSE;
+		}
+		return reset(this);
 	}
+	return TRUE;
 }
 
-METHOD(hasher_t, allocate_hash, void,
+METHOD(hasher_t, allocate_hash, bool,
 	private_openssl_hasher_t *this, chunk_t chunk, chunk_t *hash)
 {
 	if (hash)
 	{
 		*hash = chunk_alloc(get_hash_size(this));
-		get_hash(this, chunk, hash->ptr);
+		return get_hash(this, chunk, hash->ptr);
 	}
-	else
-	{
-		get_hash(this, chunk, NULL);
-	}
+	return get_hash(this, chunk, NULL);
 }
 
 METHOD(hasher_t, destroy, void,
@@ -171,7 +175,11 @@ openssl_hasher_t *openssl_hasher_create(hash_algorithm_t algo)
 	this->ctx = EVP_MD_CTX_create();
 
 	/* initialization */
-	reset(this);
+	if (!reset(this))
+	{
+		destroy(this);
+		return NULL;
+	}
 
 	return &this->public;
 }

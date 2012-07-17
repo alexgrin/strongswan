@@ -5,23 +5,32 @@ include $(CLEAR_VARS)
 # to PRODUCT_PACKAGES in
 #   build/target/product/core.mk
 # possible executables are
-#   starter - allows to control and configure the daemons from the command line
+#   starter - allows to control and configure the daemon from the command line
 #   charon - the IKE daemon
+#   scepclient - SCEP client
 
-# if you enable starter (see above) uncomment this line too
+# if you enable starter or scepclient (see above) uncomment the proper
+# lines here
 # strongswan_BUILD_STARTER := true
+# strongswan_BUILD_SCEPCLIENT := true
 
 # this is the list of plugins that are built into libstrongswan and charon
 # also these plugins are loaded by default (if not changed in strongswan.conf)
-strongswan_CHARON_PLUGINS := openssl fips-prf random pubkey pkcs1 \
+strongswan_CHARON_PLUGINS := openssl fips-prf random nonce pubkey pkcs1 \
 	pem xcbc hmac kernel-netlink socket-default android \
 	stroke eap-identity eap-mschapv2 eap-md5
+
+ifneq ($(strongswan_BUILD_SCEPCLIENT),)
+# plugins loaded by scepclient
+strongswan_SCEPCLIENT_PLUGINS := openssl curl fips-prf random pkcs1 pem
+endif
 
 strongswan_STARTER_PLUGINS := kernel-netlink
 
 # list of all plugins - used to enable them with the function below
 strongswan_PLUGINS := $(sort $(strongswan_CHARON_PLUGINS) \
-			     $(strongswan_STARTER_PLUGINS))
+			     $(strongswan_STARTER_PLUGINS) \
+			     $(strongswan_SCEPCLIENT_PLUGINS))
 
 # helper macros to only add source files for plugins included in the list above
 # source files are relative to the android.mk that called the macro
@@ -39,6 +48,7 @@ add_plugin = $(if $(call plugin_enabled,$(1)), \
 # includes
 strongswan_PATH := $(LOCAL_PATH)
 libvstr_PATH := external/strongswan-support/vstr/include
+libcurl_PATH := external/strongswan-support/libcurl/include
 libgmp_PATH := external/strongswan-support/gmp
 
 # some definitions
@@ -72,9 +82,11 @@ strongswan_CFLAGS := \
 	-DOPENSSL_NO_ECDSA \
 	-DOPENSSL_NO_ECDH \
 	-DOPENSSL_NO_ENGINE \
+	-DCONFIG_H_INCLUDED \
 	-DCAPABILITIES \
 	-DCAPABILITIES_NATIVE \
 	-DMONOLITHIC \
+	-DUSE_IKEV1 \
 	-DUSE_IKEV2 \
 	-DUSE_VSTR \
 	-DDEBUG \
@@ -106,6 +118,11 @@ strongswan_BUILD += \
 	starter \
 	stroke \
 	ipsec
+endif
+
+ifneq ($(strongswan_BUILD_SCEPCLIENT),)
+strongswan_BUILD += \
+	scepclient
 endif
 
 include $(addprefix $(LOCAL_PATH)/src/,$(addsuffix /Android.mk, \

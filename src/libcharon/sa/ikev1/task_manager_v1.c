@@ -341,6 +341,24 @@ METHOD(task_manager_t, retransmit, status_t,
 	return status;
 }
 
+/**
+ * Check if we have to wait for a mode config before starting a quick mode
+ */
+static bool mode_config_expected(private_task_manager_t *this)
+{
+	peer_cfg_t *peer_cfg;
+
+	peer_cfg = this->ike_sa->get_peer_cfg(this->ike_sa);
+	if (peer_cfg && peer_cfg->get_pool(peer_cfg))
+	{
+		if (!this->ike_sa->get_virtual_ip(this->ike_sa, FALSE))
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
 METHOD(task_manager_t, initiate, status_t,
 	private_task_manager_t *this)
 {
@@ -407,7 +425,8 @@ METHOD(task_manager_t, initiate, status_t,
 					new_mid = TRUE;
 					break;
 				}
-				if (activate_task(this, TASK_QUICK_MODE))
+				if (!mode_config_expected(this) &&
+					activate_task(this, TASK_QUICK_MODE))
 				{
 					exchange = QUICK_MODE;
 					new_mid = TRUE;
@@ -482,12 +501,17 @@ METHOD(task_manager_t, initiate, status_t,
 	me = this->ike_sa->get_my_host(this->ike_sa);
 	other = this->ike_sa->get_other_host(this->ike_sa);
 
-	message = message_create(IKEV1_MAJOR_VERSION, IKEV1_MINOR_VERSION);
 	if (new_mid)
 	{
-		this->rng->get_bytes(this->rng, sizeof(this->initiating.mid),
-							 (void*)&this->initiating.mid);
+		if (!this->rng->get_bytes(this->rng, sizeof(this->initiating.mid),
+								 (void*)&this->initiating.mid))
+		{
+			DBG1(DBG_IKE, "failed to allocate message ID, destroying IKE_SA");
+			flush(this);
+			return DESTROY_ME;
+		}
 	}
+	message = message_create(IKEV1_MAJOR_VERSION, IKEV1_MINOR_VERSION);
 	message->set_message_id(message, this->initiating.mid);
 	message->set_source(message, me->clone(me));
 	message->set_destination(message, other->clone(other));
@@ -702,11 +726,14 @@ static void send_notify(private_task_manager_t *this, message_t *request,
 		DBG1(DBG_IKE, "ignore malformed INFORMATIONAL request");
 		return;
 	}
-
+	if (!this->rng->get_bytes(this->rng, sizeof(mid), (void*)&mid))
+	{
+		DBG1(DBG_IKE, "failed to allocate message ID");
+		return;
+	}
 	response = message_create(IKEV1_MAJOR_VERSION, IKEV1_MINOR_VERSION);
 	response->set_exchange_type(response, INFORMATIONAL_V1);
 	response->set_request(response, TRUE);
-	this->rng->get_bytes(this->rng, sizeof(mid), (void*)&mid);
 	response->set_message_id(response, mid);
 	response->add_payload(response, (payload_t*)
 				notify_payload_create_from_protocol_and_type(NOTIFY_V1,
@@ -1659,9 +1686,13 @@ task_manager_v1_t *task_manager_v1_create(ike_sa_t *ike_sa)
 		destroy(this);
 		return NULL;
 	}
-
-	this->rng->get_bytes(this->rng, sizeof(this->dpd_send),
-						 (void*)&this->dpd_send);
+	if (!this->rng->get_bytes(this->rng, sizeof(this->dpd_send),
+							  (void*)&this->dpd_send))
+	{
+		DBG1(DBG_IKE, "failed to allocate message ID, unable to create IKE_SA");
+		destroy(this);
+		return NULL;
+	}
 	this->dpd_send &= 0x7FFFFFFF;
 
 	return &this->public;

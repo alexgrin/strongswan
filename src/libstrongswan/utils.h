@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2011 Tobias Brunner
+ * Copyright (C) 2008-2012 Tobias Brunner
  * Copyright (C) 2008 Martin Willi
  * Hochschule fuer Technik Rapperswil
  *
@@ -410,6 +410,23 @@ char *translate(char *str, const char *from, const char *to);
  */
 bool mkdir_p(const char *path, mode_t mode);
 
+/**
+ * Thread-safe wrapper around strerror and strerror_r.
+ *
+ * This is required because the first is not thread-safe (on some platforms)
+ * and the second uses two different signatures (POSIX/GNU) and is impractical
+ * to use anyway.
+ *
+ * @param errnum	error code (i.e. errno)
+ * @return			error message
+ */
+const char *safe_strerror(int errnum);
+
+/**
+ * Replace usages of strerror(3) with thread-safe variant.
+ */
+#define strerror(errnum) safe_strerror(errnum)
+
 #ifndef HAVE_CLOSEFROM
 /**
  * Close open file descriptors greater than or equal to lowfd.
@@ -628,7 +645,6 @@ bool cas_bool(bool *ptr, bool oldval, bool newval);
  */
 bool cas_ptr(void **ptr, void *oldval, void *newval);
 
-
 #endif /* HAVE_GCC_ATOMIC_OPERATIONS */
 
 /**
@@ -637,7 +653,7 @@ bool cas_ptr(void **ptr, void *oldval, void *newval);
  * Arguments are:
  *	time_t* time, bool utc
  */
-int time_printf_hook(char *dst, size_t len, printf_hook_spec_t *spec,
+int time_printf_hook(printf_hook_data_t *data, printf_hook_spec_t *spec,
 					 const void *const *args);
 
 /**
@@ -646,7 +662,7 @@ int time_printf_hook(char *dst, size_t len, printf_hook_spec_t *spec,
  * Arguments are:
  *	time_t* begin, time_t* end
  */
-int time_delta_printf_hook(char *dst, size_t len, printf_hook_spec_t *spec,
+int time_delta_printf_hook(printf_hook_data_t *data, printf_hook_spec_t *spec,
 						   const void *const *args);
 
 /**
@@ -655,7 +671,7 @@ int time_delta_printf_hook(char *dst, size_t len, printf_hook_spec_t *spec,
  * Arguments are:
  *	u_char *ptr, u_int len
  */
-int mem_printf_hook(char *dst, size_t len, printf_hook_spec_t *spec,
+int mem_printf_hook(printf_hook_data_t *data, printf_hook_spec_t *spec,
 					const void *const *args);
 
 #endif /** UTILS_H_ @}*/

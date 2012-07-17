@@ -45,8 +45,10 @@ struct aead_t {
 	 * @param assoc			associated data to sign
 	 * @param iv			initialization vector
 	 * @param encrypted		allocated encryption result
+	 * @return				TRUE if successfully encrypted
 	 */
-	void (*encrypt)(aead_t *this, chunk_t plain, chunk_t assoc, chunk_t iv,
+	__attribute__((warn_unused_result))
+	bool (*encrypt)(aead_t *this, chunk_t plain, chunk_t assoc, chunk_t iv,
 					chunk_t *encrypted);
 
 	/**
@@ -98,8 +100,10 @@ struct aead_t {
 	 * Set the key for encryption and authentication.
 	 *
 	 * @param key			encryption and authentication key
+	 * @return				TRUE if key set successfully
 	 */
-	void (*set_key)(aead_t *this, chunk_t key);
+	__attribute__((warn_unused_result))
+	bool (*set_key)(aead_t *this, chunk_t key);
 
 	/**
 	 * Destroy a aead_t.

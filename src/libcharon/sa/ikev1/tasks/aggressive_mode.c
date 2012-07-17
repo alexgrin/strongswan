@@ -293,14 +293,6 @@ METHOD(task_t, build_i, status_t,
 			}
 			this->id_data = chunk_empty;
 
-			if (charon->ike_sa_manager->check_uniqueness(charon->ike_sa_manager,
-														 this->ike_sa, FALSE))
-			{
-				DBG1(DBG_IKE, "cancelling Aggressive Mode due to uniqueness "
-					 "policy");
-				return send_notify(this, AUTHENTICATION_FAILED);
-			}
-
 			switch (this->method)
 			{
 				case AUTH_XAUTH_INIT_PSK:
@@ -311,9 +303,17 @@ METHOD(task_t, build_i, status_t,
 				case AUTH_XAUTH_RESP_PSK:
 				case AUTH_XAUTH_RESP_RSA:
 				case AUTH_HYBRID_RESP_RSA:
-					/* TODO-IKEv1: not yet */
-					return FAILED;
+					this->ike_sa->queue_task(this->ike_sa,
+									(task_t*)xauth_create(this->ike_sa, TRUE));
+					return SUCCESS;
 				default:
+					if (charon->ike_sa_manager->check_uniqueness(
+								charon->ike_sa_manager, this->ike_sa, FALSE))
+					{
+						DBG1(DBG_IKE, "cancelling Aggressive Mode due to "
+							 "uniqueness policy");
+						return send_notify(this, AUTHENTICATION_FAILED);
+					}
 					if (!establish(this))
 					{
 						return send_notify(this, AUTHENTICATION_FAILED);
@@ -379,6 +379,23 @@ METHOD(task_t, process_r, status_t,
 
 			this->method = sa_payload->get_auth_method(sa_payload);
 			this->lifetime = sa_payload->get_lifetime(sa_payload);
+
+			switch (this->method)
+			{
+				case AUTH_XAUTH_INIT_PSK:
+				case AUTH_XAUTH_RESP_PSK:
+				case AUTH_PSK:
+					if (!lib->settings->get_bool(lib->settings, "charon.i_dont_"
+						"care_about_security_and_use_aggressive_mode_psk", FALSE))
+					{
+						DBG1(DBG_IKE, "Aggressive Mode PSK disabled for "
+							 "security reasons");
+						return send_notify(this, AUTHENTICATION_FAILED);
+					}
+					break;
+				default:
+					break;
+			}
 
 			if (!this->proposal->get_algorithm(this->proposal,
 										DIFFIE_HELLMAN_GROUP, &group, NULL))
@@ -449,14 +466,6 @@ METHOD(task_t, process_r, status_t,
 				return send_delete(this);
 			}
 
-			if (charon->ike_sa_manager->check_uniqueness(charon->ike_sa_manager,
-														 this->ike_sa, FALSE))
-			{
-				DBG1(DBG_IKE, "cancelling Aggressive Mode due to uniqueness "
-					 "policy");
-				return send_delete(this);
-			}
-
 			switch (this->method)
 			{
 				case AUTH_XAUTH_INIT_PSK:
@@ -468,9 +477,16 @@ METHOD(task_t, process_r, status_t,
 				case AUTH_XAUTH_RESP_PSK:
 				case AUTH_XAUTH_RESP_RSA:
 				case AUTH_HYBRID_RESP_RSA:
-					/* TODO-IKEv1: not yet supported */
-					return FAILED;
+					/* wait for XAUTH request */
+					break;
 				default:
+					if (charon->ike_sa_manager->check_uniqueness(
+								charon->ike_sa_manager, this->ike_sa, FALSE))
+					{
+						DBG1(DBG_IKE, "cancelling Aggressive Mode due to "
+							 "uniqueness policy");
+						return send_delete(this);
+					}
 					if (!establish(this))
 					{
 						return send_delete(this);
@@ -478,8 +494,15 @@ METHOD(task_t, process_r, status_t,
 					lib->processor->queue_job(lib->processor, (job_t*)
 									adopt_children_job_create(
 										this->ike_sa->get_id(this->ike_sa)));
-					return SUCCESS;
+					break;
 			}
+			if (this->peer_cfg->get_pool(this->peer_cfg) == NULL &&
+				this->peer_cfg->get_virtual_ip(this->peer_cfg))
+			{
+				this->ike_sa->queue_task(this->ike_sa,
+							(task_t*)mode_config_create(this->ike_sa, TRUE));
+			}
+			return SUCCESS;
 		}
 		default:
 			return FAILED;

@@ -55,11 +55,6 @@ struct private_receiver_t {
 	receiver_t public;
 
 	/**
-	 * Threads job receiving packets
-	 */
-	callback_job_t *job;
-
-	/**
 	 * current secret to use for cookie calculation
 	 */
 	char secret[SECRET_LENGTH];
@@ -176,8 +171,8 @@ static void send_notify(message_t *request, int major, exchange_type_t exchange,
 /**
  * build a cookie
  */
-static chunk_t cookie_build(private_receiver_t *this, message_t *message,
-							u_int32_t t, chunk_t secret)
+static bool cookie_build(private_receiver_t *this, message_t *message,
+						 u_int32_t t, chunk_t secret, chunk_t *cookie)
 {
 	u_int64_t spi = message->get_initiator_spi(message);
 	host_t *ip = message->get_source(message);
@@ -187,8 +182,12 @@ static chunk_t cookie_build(private_receiver_t *this, message_t *message,
 	input = chunk_cata("cccc", ip->get_address(ip), chunk_from_thing(spi),
 					  chunk_from_thing(t), secret);
 	hash = chunk_alloca(this->hasher->get_hash_size(this->hasher));
-	this->hasher->get_hash(this->hasher, input, hash.ptr);
-	return chunk_cat("cc", chunk_from_thing(t), hash);
+	if (!this->hasher->get_hash(this->hasher, input, hash.ptr))
+	{
+		return FALSE;
+	}
+	*cookie = chunk_cat("cc", chunk_from_thing(t), hash);
+	return TRUE;
 }
 
 /**
@@ -223,7 +222,10 @@ static bool cookie_verify(private_receiver_t *this, message_t *message,
 	}
 
 	/* compare own calculation against received */
-	reference = cookie_build(this, message, t, secret);
+	if (!cookie_build(this, message, t, secret, &reference))
+	{
+		return FALSE;
+	}
 	if (chunk_equals(reference, cookie))
 	{
 		chunk_free(&reference);
@@ -316,24 +318,36 @@ static bool drop_ike_sa_init(private_receiver_t *this, message_t *message)
 	{
 		chunk_t cookie;
 
-		cookie = cookie_build(this, message, now - this->secret_offset,
-							  chunk_from_thing(this->secret));
 		DBG2(DBG_NET, "received packet from: %#H to %#H",
 			 message->get_source(message),
 			 message->get_destination(message));
+		if (!cookie_build(this, message, now - this->secret_offset,
+						  chunk_from_thing(this->secret), &cookie))
+		{
+			return TRUE;
+		}
 		DBG2(DBG_NET, "sending COOKIE notify to %H",
 			 message->get_source(message));
 		send_notify(message, IKEV2_MAJOR_VERSION, IKE_SA_INIT, COOKIE, cookie);
 		chunk_free(&cookie);
 		if (++this->secret_used > COOKIE_REUSE)
 		{
-			/* create new cookie */
+			char secret[SECRET_LENGTH];
+
 			DBG1(DBG_NET, "generating new cookie secret after %d uses",
 				 this->secret_used);
-			memcpy(this->secret_old, this->secret, SECRET_LENGTH);
-			this->rng->get_bytes(this->rng, SECRET_LENGTH, this->secret);
-			this->secret_switch = now;
-			this->secret_used = 0;
+			if (this->rng->get_bytes(this->rng, SECRET_LENGTH, secret))
+			{
+				memcpy(this->secret_old, this->secret, SECRET_LENGTH);
+				memcpy(this->secret, secret, SECRET_LENGTH);
+				memwipe(secret, SECRET_LENGTH);
+				this->secret_switch = now;
+				this->secret_used = 0;
+			}
+			else
+			{
+				DBG1(DBG_NET, "failed to allocated cookie secret, keeping old");
+			}
 		}
 		return TRUE;
 	}
@@ -393,8 +407,6 @@ static job_requeue_t receive_packets(private_receiver_t *this)
 	status = charon->socket->receive(charon->socket, &packet);
 	if (status == NOT_SUPPORTED)
 	{
-		/* the processor destroys this job  */
-		this->job = NULL;
 		return JOB_REQUEUE_NONE;
 	}
 	else if (status != SUCCESS)
@@ -504,10 +516,6 @@ static job_requeue_t receive_packets(private_receiver_t *this)
 METHOD(receiver_t, destroy, void,
 	private_receiver_t *this)
 {
-	if (this->job)
-	{
-		this->job->cancel(this->job);
-	}
 	this->rng->destroy(this->rng);
 	this->hasher->destroy(this->hasher);
 	free(this);
@@ -551,26 +559,31 @@ receiver_t *receiver_create()
 				"%s.receive_delay_response", TRUE, charon->name),
 
 	this->hasher = lib->crypto->create_hasher(lib->crypto, HASH_PREFERRED);
-	if (this->hasher == NULL)
+	if (!this->hasher)
 	{
 		DBG1(DBG_NET, "creating cookie hasher failed, no hashers supported");
 		free(this);
 		return NULL;
 	}
 	this->rng = lib->crypto->create_rng(lib->crypto, RNG_STRONG);
-	if (this->rng == NULL)
+	if (!this->rng)
 	{
 		DBG1(DBG_NET, "creating cookie RNG failed, no RNG supported");
 		this->hasher->destroy(this->hasher);
 		free(this);
 		return NULL;
 	}
-	this->rng->get_bytes(this->rng, SECRET_LENGTH, this->secret);
+	if (!this->rng->get_bytes(this->rng, SECRET_LENGTH, this->secret))
+	{
+		DBG1(DBG_NET, "creating cookie secret failed");
+		destroy(this);
+		return NULL;
+	}
 	memcpy(this->secret_old, this->secret, SECRET_LENGTH);
 
-	this->job = callback_job_create_with_prio((callback_job_cb_t)receive_packets,
-										this, NULL, NULL, JOB_PRIO_CRITICAL);
-	lib->processor->queue_job(lib->processor, (job_t*)this->job);
+	lib->processor->queue_job(lib->processor,
+		(job_t*)callback_job_create_with_prio((callback_job_cb_t)receive_packets,
+			this, NULL, (callback_job_cancel_t)return_false, JOB_PRIO_CRITICAL));
 
 	return &this->public;
 }

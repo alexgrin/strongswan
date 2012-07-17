@@ -1,6 +1,5 @@
 /*
- * Copyright (C) 2011 Andreas Steffen
- *
+ * Copyright (C) 2011-2012 Andreas Steffen
  * HSR Hochschule fuer Technik Rapperswil
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -90,6 +89,16 @@ struct private_pa_tnc_msg_t {
 	u_int32_t identifier;
 
 	/**
+	 * Current PA-TNC Message size
+	 */
+	size_t msg_len;
+
+	/**
+	 * Maximum PA-TNC Message size
+	 */
+	size_t max_msg_len;
+
+	/**
 	 * Encoded message
 	 */
 	chunk_t encoding;
@@ -101,13 +110,28 @@ METHOD(pa_tnc_msg_t, get_encoding, chunk_t,
 	return this->encoding;
 }
 
-METHOD(pa_tnc_msg_t, add_attribute, void,
+METHOD(pa_tnc_msg_t, add_attribute, bool,
 	private_pa_tnc_msg_t *this, pa_tnc_attr_t *attr)
 {
+	chunk_t attr_value;
+	size_t attr_len;
+
+	attr->build(attr);
+	attr_value = attr->get_value(attr);
+	attr_len = PA_TNC_ATTR_HEADER_SIZE + attr_value.len;
+
+	if (this->max_msg_len && this->msg_len + attr_len > this->max_msg_len)
+	{
+		/* attribute just does not fit into this message */
+		return FALSE;
+	}
+	this->msg_len += attr_len;
+
 	this->attributes->insert_last(this->attributes, attr);
+	return TRUE;
 }
 
-METHOD(pa_tnc_msg_t, build, void,
+METHOD(pa_tnc_msg_t, build, bool,
 	private_pa_tnc_msg_t *this)
 {
 	bio_writer_t *writer;
@@ -118,25 +142,29 @@ METHOD(pa_tnc_msg_t, build, void,
 	u_int32_t type;
 	u_int8_t flags;
 	chunk_t value;
-	rng_t *rng;
+	nonce_gen_t *ng;
 
-	/* create a random message identifier */
-	rng = lib->crypto->create_rng(lib->crypto, RNG_WEAK);
-	rng->get_bytes(rng, sizeof(this->identifier), (u_int8_t*)&this->identifier);
-	rng->destroy(rng);
+	/* generate a nonce as a message identifier */
+	ng = lib->crypto->create_nonce_gen(lib->crypto);
+	if (!ng || !ng->get_nonce(ng, 4, (u_int8_t*)&this->identifier))
+	{
+		DBG1(DBG_TNC, "failed to generate random PA-TNC message identifier");
+		DESTROY_IF(ng);
+		return FALSE;
+	}
+	ng->destroy(ng);
 	DBG2(DBG_TNC, "creating PA-TNC message with ID 0x%08x", this->identifier);
 
 	/* build message header */
-	writer = bio_writer_create(PA_TNC_HEADER_SIZE);
+	writer = bio_writer_create(this->msg_len);
 	writer->write_uint8 (writer, PA_TNC_VERSION);
 	writer->write_uint24(writer, PA_TNC_RESERVED);
 	writer->write_uint32(writer, this->identifier);
 
-	/* build and append encoding of PA-TNC attributes */
+	/* append encoded value of PA-TNC attributes */
 	enumerator = this->attributes->create_enumerator(this->attributes);
 	while (enumerator->enumerate(enumerator, &attr))
 	{
-		attr->build(attr);
 		vendor_id = attr->get_vendor_id(attr);
 		type = attr->get_type(attr);
 		value = attr->get_value(attr);
@@ -170,6 +198,8 @@ METHOD(pa_tnc_msg_t, build, void,
 	free(this->encoding.ptr);
 	this->encoding = chunk_clone(writer->get_buf(writer));
 	writer->destroy(writer);
+
+	return TRUE;
 }
 
 METHOD(pa_tnc_msg_t, process, status_t,
@@ -292,7 +322,7 @@ METHOD(pa_tnc_msg_t, process, status_t,
 						offset + PA_TNC_ATTR_HEADER_SIZE + attr_offset);
 			goto err;
 		}
-		add_attribute(this, attr);
+		this->attributes->insert_last(this->attributes, attr);
 		offset += length;
 	}
 
@@ -358,8 +388,9 @@ METHOD(pa_tnc_msg_t, process_ietf_std_errors, bool,
 					break;
 			}
 
-			/* remove the processed IETF standard error attribute */
+			/* remove and delete the processed IETF standard error attribute */
 			this->attributes->remove_at(this->attributes, enumerator);
+			attr->destroy(attr);
 			fatal_error = TRUE;
 		}
 	}
@@ -394,6 +425,33 @@ METHOD(pa_tnc_msg_t, destroy, void,
 /**
  * See header
  */
+pa_tnc_msg_t *pa_tnc_msg_create(size_t max_msg_len)
+{
+	private_pa_tnc_msg_t *this;
+
+	INIT(this,
+		.public = {
+			.get_encoding = _get_encoding,
+			.add_attribute = _add_attribute,
+			.build = _build,
+			.process = _process,
+			.process_ietf_std_errors = _process_ietf_std_errors,
+			.create_attribute_enumerator = _create_attribute_enumerator,
+			.create_error_enumerator = _create_error_enumerator,
+			.destroy = _destroy,
+		},
+		.attributes = linked_list_create(),
+		.errors = linked_list_create(),
+		.msg_len = PA_TNC_HEADER_SIZE,
+		.max_msg_len = max_msg_len,
+	);
+
+	return &this->public;
+}
+
+/**
+ * See header
+ */
 pa_tnc_msg_t *pa_tnc_msg_create_from_data(chunk_t data)
 {
 	private_pa_tnc_msg_t *this;
@@ -415,13 +473,5 @@ pa_tnc_msg_t *pa_tnc_msg_create_from_data(chunk_t data)
 	);
 
 	return &this->public;
-}
-
-/**
- * See header
- */
-pa_tnc_msg_t *pa_tnc_msg_create(void)
-{
-	return pa_tnc_msg_create_from_data(chunk_empty);
 }
 

@@ -7,10 +7,10 @@
  * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
  * copies of the Software, and to permit persons to whom the Software is
  * furnished to do so, subject to the following conditions:
-
+ *
  * The above copyright notice and this permission notice shall be included in
  * all copies or substantial portions of the Software.
-
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -25,7 +25,6 @@
 #include <openssl/err.h>
 
 #include "openssl_rng.h"
-#include "openssl_plugin.h"
 
 typedef struct private_openssl_rng_t private_openssl_rng_t;
 
@@ -45,32 +44,36 @@ struct private_openssl_rng_t {
 	rng_quality_t quality;
 };
 
-METHOD(rng_t, get_bytes, void, private_openssl_rng_t *this, size_t bytes, u_int8_t *buffer)
+METHOD(rng_t, get_bytes, bool,
+	private_openssl_rng_t *this, size_t bytes, u_int8_t *buffer)
 {
-	u_int32_t ret=0;
+	u_int32_t ret;
 
 	if (this->quality == RNG_STRONG)
 	{
-		ret = RAND_bytes( (char*)buffer, bytes);
+		ret = RAND_bytes((char*)buffer, bytes);
 	}
 	else
 	{
-		ret = RAND_pseudo_bytes( (char*)buffer, bytes);
+		ret = RAND_pseudo_bytes((char*)buffer, bytes);
 	}
-	
-	if (ret == 0)
-	{
-		DBG1(DBG_LIB, "getting randomness from openssl failed.");
-	}
+	return ret != 0;
 }
 
-METHOD(rng_t, allocate_bytes, void, private_openssl_rng_t *this, size_t bytes, chunk_t *chunk)
+METHOD(rng_t, allocate_bytes, bool,
+	private_openssl_rng_t *this, size_t bytes, chunk_t *chunk)
 {
 	*chunk = chunk_alloc(bytes);
-	get_bytes(this, chunk->len, chunk->ptr);
+	if (!get_bytes(this, chunk->len, chunk->ptr))
+	{
+		chunk_free(chunk);
+		return FALSE;
+	}
+	return TRUE;
 }
 
-METHOD(rng_t, destroy, void, private_openssl_rng_t *this)
+METHOD(rng_t, destroy, void,
+	private_openssl_rng_t *this)
 {
 	free(this);
 }
@@ -90,9 +93,8 @@ openssl_rng_t *openssl_rng_create(rng_quality_t quality)
 				.destroy = _destroy,
 			},
 		},
+		.quality = quality,
 	);
 
-	this->quality = quality;
-	
 	return &this->public;
 }

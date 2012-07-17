@@ -17,6 +17,7 @@
 
 #include <inttypes.h>
 #include <time.h>
+#include <sys/utsname.h>
 
 #ifdef HAVE_MALLINFO
 #include <malloc.h>
@@ -49,6 +50,11 @@ struct private_stroke_list_t {
 	 * public functions
 	 */
 	stroke_list_t public;
+
+	/**
+	 * Kind of *swan we run
+	 */
+	char *swan;
 
 	/**
 	 * timestamp of daemon start
@@ -115,6 +121,17 @@ static void log_ike_sa(FILE *out, ike_sa_t *ike_sa, bool all)
 	if (all)
 	{
 		proposal_t *ike_proposal;
+		identification_t *eap_id;
+
+		eap_id = ike_sa->get_other_eap_id(ike_sa);
+
+		if (!eap_id->equals(eap_id, ike_sa->get_other_id(ike_sa)))
+		{
+			fprintf(out, "%12s[%d]: Remote %s identity: %Y\n",
+					ike_sa->get_name(ike_sa), ike_sa->get_unique_id(ike_sa),
+					ike_sa->get_version(ike_sa) == IKEV1 ? "XAuth" : "EAP",
+					eap_id);
+		}
 
 		ike_proposal = ike_sa->get_proposal(ike_sa);
 
@@ -437,11 +454,19 @@ METHOD(stroke_list_t, status, void,
 		u_int32_t dpd;
 		time_t since, now;
 		u_int size, online, offline, i;
+		struct utsname utsname;
+
 		now = time_monotonic(NULL);
 		since = time(NULL) - (now - this->uptime);
 
-		fprintf(out, "Status of IKE charon daemon (strongSwan "VERSION"):\n");
-		fprintf(out, "  uptime: %V, since %T\n", &now, &this->uptime, &since, FALSE);
+		fprintf(out, "Status of IKE charon daemon (%sSwan "VERSION, this->swan);
+		if (uname(&utsname) == 0)
+		{
+			fprintf(out, ", %s %s, %s",
+					utsname.sysname, utsname.release, utsname.machine);
+		}
+		fprintf(out, "):\n  uptime: %V, since %T\n", &now, &this->uptime, &since,
+				FALSE);
 #ifdef HAVE_MALLINFO
 		{
 			struct mallinfo mi = mallinfo();
@@ -1493,15 +1518,21 @@ stroke_list_t *stroke_list_create(stroke_attribute_t *attribute)
 
 	INIT(this,
 		.public = {
-
 			.list = _list,
 			.status = _status,
 			.leases = _leases,
 			.destroy = _destroy,
 		},
 		.uptime = time_monotonic(NULL),
+		.swan = "strong",
 		.attribute = attribute,
 	);
+
+	if (lib->settings->get_bool(lib->settings,
+		"charon.i_dont_care_about_security_and_use_aggressive_mode_psk", FALSE))
+	{
+		this->swan = "weak";
+	}
 
 	return &this->public;
 }

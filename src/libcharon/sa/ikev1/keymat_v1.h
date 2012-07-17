@@ -101,28 +101,33 @@ struct keymat_v1_t {
 	 * @param ike_sa_id		IKE_SA identifier
 	 * @param sa_i			encoded SA payload of initiator
 	 * @param id			encoded IDii payload for HASH_I (IDir for HASH_R)
-	 * @return				allocated HASH data
+	 * @param hash			chunk receiving allocated HASH data
+	 * @return				TRUE if hash allocated successfully
 	 */
-	chunk_t (*get_hash)(keymat_v1_t *this, bool initiator,
+	bool (*get_hash)(keymat_v1_t *this, bool initiator,
 						chunk_t dh, chunk_t dh_other, ike_sa_id_t *ike_sa_id,
-						chunk_t sa_i, chunk_t id);
+						chunk_t sa_i, chunk_t id, chunk_t *hash);
 
 	/**
 	 * Get HASH data for integrity/authentication in Phase 2 exchanges.
 	 *
 	 * @param message		message to generate the HASH data for
-	 * @return				allocated HASH data
+	 * @param hash			chunk receiving allocated hash data
+	 * @return				TRUE if hash allocated successfully
 	 */
-	chunk_t (*get_hash_phase2)(keymat_v1_t *this, message_t *message);
-
+	bool (*get_hash_phase2)(keymat_v1_t *this, message_t *message, chunk_t *hash);
 
 	/**
 	 * Returns the IV for a message with the given message ID.
 	 *
+	 * The return chunk contains internal data and is valid until the next
+	 * get_iv/udpate_iv/confirm_iv call.
+	 *
 	 * @param mid			message ID
-	 * @return				IV (needs to be freed)
+	 * @param iv			chunk receiving IV, internal data
+	 * @return				TRUE if IV allocated successfully
 	 */
-	chunk_t (*get_iv)(keymat_v1_t *this, u_int32_t mid);
+	bool (*get_iv)(keymat_v1_t *this, u_int32_t mid, chunk_t *iv);
 
 	/**
 	 * Updates the IV for the next message with the given message ID.
@@ -134,8 +139,9 @@ struct keymat_v1_t {
 	 *
 	 * @param mid			message ID
 	 * @param last_block	last block of encrypted message (gets cloned)
+	 * @return				TRUE if IV updated successfully
 	 */
-	void (*update_iv)(keymat_v1_t *this, u_int32_t mid, chunk_t last_block);
+	bool (*update_iv)(keymat_v1_t *this, u_int32_t mid, chunk_t last_block);
 
 	/**
 	 * Confirms the updated IV for the given message ID.
@@ -144,9 +150,9 @@ struct keymat_v1_t {
 	 * be called after update_iv.
 	 *
 	 * @param mid			message ID
+	 * @return				TRUE if IV confirmed successfully
 	 */
-	void (*confirm_iv)(keymat_v1_t *this, u_int32_t mid);
-
+	bool (*confirm_iv)(keymat_v1_t *this, u_int32_t mid);
 };
 
 /**

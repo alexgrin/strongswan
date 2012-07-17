@@ -27,6 +27,7 @@ typedef enum hash_algorithm_t hash_algorithm_t;
 typedef struct hasher_t hasher_t;
 
 #include <library.h>
+#include <crypto/prfs/prf.h>
 #include <crypto/signers/signer.h>
 #include <credentials/keys/public_key.h>
 
@@ -66,6 +67,7 @@ extern enum_name_t *hash_algorithm_names;
  * Generic interface for all hash functions.
  */
 struct hasher_t {
+
 	/**
 	 * Hash data and write it in the buffer.
 	 *
@@ -78,8 +80,10 @@ struct hasher_t {
 	 *
 	 * @param data		data to hash
 	 * @param hash		pointer where the hash will be written
+	 * @return			TRUE if hash created successfully
 	 */
-	void (*get_hash) (hasher_t *this, chunk_t data, u_int8_t *hash);
+	__attribute__((warn_unused_result))
+	bool (*get_hash) (hasher_t *this, chunk_t data, u_int8_t *hash);
 
 	/**
 	 * Hash data and allocate space for the hash.
@@ -90,8 +94,10 @@ struct hasher_t {
 	 *
 	 * @param data		chunk with data to hash
 	 * @param hash		chunk which will hold allocated hash
+	 * @return			TRUE if hash allocated successfully
 	 */
-	void (*allocate_hash) (hasher_t *this, chunk_t data, chunk_t *hash);
+	__attribute__((warn_unused_result))
+	bool (*allocate_hash) (hasher_t *this, chunk_t data, chunk_t *hash);
 
 	/**
 	 * Get the size of the resulting hash.
@@ -101,9 +107,12 @@ struct hasher_t {
 	size_t (*get_hash_size) (hasher_t *this);
 
 	/**
-	 * Resets the hashers state.
+	 * Resets the hasher's state.
+	 *
+	 * @return			TRUE if hasher reset successfully
 	 */
-	void (*reset) (hasher_t *this);
+	__attribute__((warn_unused_result))
+	bool (*reset) (hasher_t *this);
 
 	/**
 	 * Destroys a hasher object.
@@ -115,17 +124,30 @@ struct hasher_t {
  * Conversion of ASN.1 OID to hash algorithm.
  *
  * @param oid			ASN.1 OID
- * @return				hash algorithm, HASH_UNKNOWN if OID unsuported
+ * @return				hash algorithm, HASH_UNKNOWN if OID unsupported
  */
 hash_algorithm_t hasher_algorithm_from_oid(int oid);
 
 /**
- * Conversion of integrity algorithm to hash algorithm (if based on one).
+ * Conversion of PRF algorithm to hash algorithm (if based on one).
  *
- * @param integrity		integrity algorithm
+ * @param alg			prf algorithm
  * @return				hash algorithm, HASH_UNKNOWN if not based on a hash
  */
-hash_algorithm_t hasher_algorithm_from_integrity(integrity_algorithm_t integrity);
+hash_algorithm_t hasher_algorithm_from_prf(pseudo_random_function_t alg);
+
+/**
+ * Conversion of integrity algorithm to hash algorithm (if based on one).
+ *
+ * If length is not NULL the length of the resulting signature is returned,
+ * which might be smaller than the output size of the underlying hash.
+ *
+ * @param alg			integrity algorithm
+ * @param length		returns signature length, if not NULL
+ * @return				hash algorithm, HASH_UNKNOWN if not based on a hash
+ */
+hash_algorithm_t hasher_algorithm_from_integrity(integrity_algorithm_t alg,
+												 size_t *length);
 
 /**
  * Conversion of hash algorithm into ASN.1 OID.

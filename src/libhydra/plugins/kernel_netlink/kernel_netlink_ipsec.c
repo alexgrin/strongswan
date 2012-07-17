@@ -269,11 +269,6 @@ struct private_kernel_netlink_ipsec_t {
 	hashtable_t *sas;
 
 	/**
-	 * Job receiving netlink events
-	 */
-	callback_job_t *job;
-
-	/**
 	 * Netlink xfrm socket (IPsec)
 	 */
 	netlink_socket_t *socket_xfrm;
@@ -344,8 +339,8 @@ static void route_entry_destroy(route_entry_t *this)
 static bool route_entry_equals(route_entry_t *a, route_entry_t *b)
 {
 	return a->if_name && b->if_name && streq(a->if_name, b->if_name) &&
-		   a->src_ip->equals(a->src_ip, b->src_ip) &&
-		   a->gateway->equals(a->gateway, b->gateway) &&
+		   a->src_ip->ip_equals(a->src_ip, b->src_ip) &&
+		   a->gateway->ip_equals(a->gateway, b->gateway) &&
 		   chunk_equals(a->dst_net, b->dst_net) && a->prefixlen == b->prefixlen;
 }
 
@@ -2618,10 +2613,6 @@ METHOD(kernel_ipsec_t, destroy, void,
 	enumerator_t *enumerator;
 	policy_entry_t *policy;
 
-	if (this->job)
-	{
-		this->job->cancel(this->job);
-	}
 	if (this->socket_xfrm_events > 0)
 	{
 		close(this->socket_xfrm_events);
@@ -2730,9 +2721,10 @@ kernel_netlink_ipsec_t *kernel_netlink_ipsec_create()
 			destroy(this);
 			return NULL;
 		}
-		this->job = callback_job_create_with_prio((callback_job_cb_t)receive_events,
-											this, NULL, NULL, JOB_PRIO_CRITICAL);
-		lib->processor->queue_job(lib->processor, (job_t*)this->job);
+		lib->processor->queue_job(lib->processor,
+			(job_t*)callback_job_create_with_prio(
+					(callback_job_cb_t)receive_events, this, NULL,
+					(callback_job_cancel_t)return_false, JOB_PRIO_CRITICAL));
 	}
 
 	return &this->public;

@@ -67,17 +67,11 @@ static job_requeue_t run(nm_backend_t *this)
 	return JOB_REQUEUE_NONE;
 }
 
-/*
- * see header file
+/**
+ * Cancel the GLib Main Event Loop
  */
-void nm_backend_deinit()
+static bool cancel(nm_backend_t *this)
 {
-	nm_backend_t *this = nm_backend;
-
-	if (!this)
-	{
-		return;
-	}
 	if (this->loop)
 	{
 		if (g_main_loop_is_running(this->loop))
@@ -85,6 +79,20 @@ void nm_backend_deinit()
 			g_main_loop_quit(this->loop);
 		}
 		g_main_loop_unref(this->loop);
+	}
+	return TRUE;
+}
+
+/**
+ * Deinitialize NetworkManager backend
+ */
+static void nm_backend_deinit()
+{
+	nm_backend_t *this = nm_backend;
+
+	if (!this)
+	{
+		return;
 	}
 	if (this->plugin)
 	{
@@ -99,10 +107,10 @@ void nm_backend_deinit()
 	nm_backend = NULL;
 }
 
-/*
- * see header file
+/**
+ * Initialize NetworkManager backend
  */
-bool nm_backend_init()
+static bool nm_backend_init()
 {
 	nm_backend_t *this;
 
@@ -129,11 +137,38 @@ bool nm_backend_init()
 	}
 
 	/* bypass file permissions to read from users ssh-agent */
-	charon->keep_cap(charon, CAP_DAC_OVERRIDE);
+	charon->caps->keep(charon->caps, CAP_DAC_OVERRIDE);
 
 	lib->processor->queue_job(lib->processor,
-				(job_t*)callback_job_create_with_prio((callback_job_cb_t)run,
-										this, NULL, NULL, JOB_PRIO_CRITICAL));
+		(job_t*)callback_job_create_with_prio((callback_job_cb_t)run, this,
+				NULL, (callback_job_cancel_t)cancel, JOB_PRIO_CRITICAL));
 	return TRUE;
 }
 
+/**
+ * Initialize/deinitialize NetworkManager backend
+ */
+static bool nm_backend_cb(void *plugin,
+						  plugin_feature_t *feature, bool reg, void *data)
+{
+	if (reg)
+	{
+		return nm_backend_init();
+	}
+	nm_backend_deinit();
+	return TRUE;
+}
+
+/*
+ * see header file
+ */
+void nm_backend_register()
+{
+	static plugin_feature_t features[] = {
+		PLUGIN_CALLBACK((plugin_feature_callback_t)nm_backend_cb, NULL),
+			PLUGIN_PROVIDE(CUSTOM, "NetworkManager backend"),
+				PLUGIN_DEPENDS(CUSTOM, "libcharon"),
+	};
+	lib->plugins->add_static_features(lib->plugins, "nm-backend", features,
+									  countof(features), TRUE);
+}

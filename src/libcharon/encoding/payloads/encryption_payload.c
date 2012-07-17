@@ -308,7 +308,7 @@ static chunk_t append_header(private_encryption_payload_t *this, chunk_t assoc)
 	return chunk_cat("cc", assoc, chunk_from_thing(header));
 }
 
-METHOD(encryption_payload_t, encrypt, bool,
+METHOD(encryption_payload_t, encrypt, status_t,
 	private_encryption_payload_t *this, chunk_t assoc)
 {
 	chunk_t iv, plain, padding, icv, crypt;
@@ -319,14 +319,14 @@ METHOD(encryption_payload_t, encrypt, bool,
 	if (this->aead == NULL)
 	{
 		DBG1(DBG_ENC, "encrypting encryption payload failed, transform missing");
-		return FALSE;
+		return INVALID_STATE;
 	}
 
 	rng = lib->crypto->create_rng(lib->crypto, RNG_WEAK);
 	if (!rng)
 	{
 		DBG1(DBG_ENC, "encrypting encryption payload failed, no RNG found");
-		return FALSE;
+		return NOT_SUPPORTED;
 	}
 
 	assoc = append_header(this, assoc);
@@ -356,8 +356,14 @@ METHOD(encryption_payload_t, encrypt, bool,
 	crypt = chunk_create(plain.ptr, plain.len + padding.len);
 	generator->destroy(generator);
 
-	rng->get_bytes(rng, iv.len, iv.ptr);
-	rng->get_bytes(rng, padding.len - 1, padding.ptr);
+	if (!rng->get_bytes(rng, iv.len, iv.ptr) ||
+		!rng->get_bytes(rng, padding.len - 1, padding.ptr))
+	{
+		DBG1(DBG_ENC, "encrypting encryption payload failed, no IV or padding");
+		rng->destroy(rng);
+		free(assoc.ptr);
+		return FAILED;
+	}
 	padding.ptr[padding.len - 1] = padding.len - 1;
 	rng->destroy(rng);
 
@@ -367,17 +373,21 @@ METHOD(encryption_payload_t, encrypt, bool,
 	DBG3(DBG_ENC, "padding %B", &padding);
 	DBG3(DBG_ENC, "assoc %B", &assoc);
 
-	this->aead->encrypt(this->aead, crypt, assoc, iv, NULL);
+	if (!this->aead->encrypt(this->aead, crypt, assoc, iv, NULL))
+	{
+		free(assoc.ptr);
+		return FAILED;
+	}
 
 	DBG3(DBG_ENC, "encrypted %B", &crypt);
 	DBG3(DBG_ENC, "ICV %B", &icv);
 
 	free(assoc.ptr);
 
-	return TRUE;
+	return SUCCESS;
 }
 
-METHOD(encryption_payload_t, encrypt_v1, bool,
+METHOD(encryption_payload_t, encrypt_v1, status_t,
 	private_encryption_payload_t *this, chunk_t iv)
 {
 	generator_t *generator;
@@ -387,8 +397,7 @@ METHOD(encryption_payload_t, encrypt_v1, bool,
 	if (this->aead == NULL)
 	{
 		DBG1(DBG_ENC, "encryption failed, transform missing");
-		chunk_free(&iv);
-		return FALSE;
+		return INVALID_STATE;
 	}
 
 	generator = generator_create();
@@ -410,12 +419,14 @@ METHOD(encryption_payload_t, encrypt_v1, bool,
 	DBG3(DBG_ENC, "plain %B", &plain);
 	DBG3(DBG_ENC, "padding %B", &padding);
 
-	this->aead->encrypt(this->aead, this->encrypted, chunk_empty, iv, NULL);
-	chunk_free(&iv);
+	if (!this->aead->encrypt(this->aead, this->encrypted, chunk_empty, iv, NULL))
+	{
+		return FAILED;
+	}
 
 	DBG3(DBG_ENC, "encrypted %B", &this->encrypted);
 
-	return TRUE;
+	return SUCCESS;
 }
 
 /**
@@ -534,7 +545,6 @@ METHOD(encryption_payload_t, decrypt_v1, status_t,
 	if (this->aead == NULL)
 	{
 		DBG1(DBG_ENC, "decryption failed, transform missing");
-		chunk_free(&iv);
 		return INVALID_STATE;
 	}
 
@@ -543,15 +553,16 @@ METHOD(encryption_payload_t, decrypt_v1, status_t,
 		this->encrypted.len < iv.len || this->encrypted.len % iv.len)
 	{
 		DBG1(DBG_ENC, "decryption failed, invalid length");
-		chunk_free(&iv);
 		return FAILED;
 	}
 
 	DBG3(DBG_ENC, "decrypting payloads:");
 	DBG3(DBG_ENC, "encrypted %B", &this->encrypted);
 
-	this->aead->decrypt(this->aead, this->encrypted, chunk_empty, iv, NULL);
-	chunk_free(&iv);
+	if (!this->aead->decrypt(this->aead, this->encrypted, chunk_empty, iv, NULL))
+	{
+		return FAILED;
+	}
 
 	DBG3(DBG_ENC, "plain %B", &this->encrypted);
 

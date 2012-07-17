@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011 Sansar Choinyambuu
+ * Copyright (C) 2011-2012 Sansar Choinyambuu, Andreas Steffen
  * HSR Hochschule fuer Technik Rapperswil
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -60,6 +60,11 @@ struct private_imv_attestation_state_t {
 	 * Does the TNCCS connection support exclusive delivery?
 	 */
 	bool has_excl;
+
+	/**
+	 * Maximum PA-TNC message size for this TNCCS connection
+	 */
+	u_int32_t max_msg_len;
 
 	/**
 	 * IMV Attestation handshake state
@@ -148,6 +153,18 @@ METHOD(imv_state_t, set_flags, void,
 {
 	this->has_long = has_long;
 	this->has_excl = has_excl;
+}
+
+METHOD(imv_state_t, set_max_msg_len, void,
+	private_imv_attestation_state_t *this, u_int32_t max_msg_len)
+{
+	this->max_msg_len = max_msg_len;
+}
+
+METHOD(imv_state_t, get_max_msg_len, u_int32_t,
+	private_imv_attestation_state_t *this)
+{
+	return this->max_msg_len;
 }
 
 METHOD(imv_state_t, change_state, void,
@@ -296,7 +313,7 @@ METHOD(imv_attestation_state_t, add_component, void,
 	this->components->insert_last(this->components, entry);
 }
 
-METHOD(imv_attestation_state_t, check_off_component, pts_component_t*,
+METHOD(imv_attestation_state_t, get_component, pts_component_t*,
 	private_imv_attestation_state_t *this, pts_comp_func_name_t *name)
 {
 	enumerator_t *enumerator;
@@ -308,36 +325,11 @@ METHOD(imv_attestation_state_t, check_off_component, pts_component_t*,
 		if (name->equals(name, entry->get_comp_func_name(entry)))
 		{
 			found = entry;
-			this->components->remove_at(this->components, enumerator);
 			break;
 		}
 	}
 	enumerator->destroy(enumerator);
 	return found;
-}
-
-METHOD(imv_attestation_state_t, check_off_registrations, void,
-	private_imv_attestation_state_t *this)
-{
-	enumerator_t *enumerator;
-	pts_component_t *entry;
-
-	enumerator = this->components->create_enumerator(this->components);
-	while (enumerator->enumerate(enumerator, &entry))
-	{
-		if (entry->check_off_registrations(entry))
-		{
-			this->components->remove_at(this->components, enumerator);
-			entry->destroy(entry);
-		}
-	}
-	enumerator->destroy(enumerator);
-}
-
-METHOD(imv_attestation_state_t, get_component_count, int,
-	private_imv_attestation_state_t *this)
-{
-	return this->components->get_count(this->components);
 }
 
 METHOD(imv_attestation_state_t, get_measurement_error, bool,
@@ -350,6 +342,28 @@ METHOD(imv_attestation_state_t, set_measurement_error, void,
 	private_imv_attestation_state_t *this)
 {
 	this->measurement_error = TRUE;
+}
+
+METHOD(imv_attestation_state_t, finalize_components, void,
+	private_imv_attestation_state_t *this)
+{
+	pts_component_t *entry;
+
+	while (this->components->remove_last(this->components,
+										(void**)&entry) == SUCCESS)
+	{
+		if (!entry->finalize(entry))
+		{
+			_set_measurement_error(this);
+		}
+		entry->destroy(entry);
+	}
+}
+
+METHOD(imv_attestation_state_t, components_finalized, bool,
+	private_imv_attestation_state_t *this)
+{
+	return this->components->get_count(this->components) == 0;
 }
 
 /**
@@ -367,6 +381,8 @@ imv_state_t *imv_attestation_state_create(TNC_ConnectionID connection_id)
 				.has_long = _has_long,
 				.has_excl = _has_excl,
 				.set_flags = _set_flags,
+				.set_max_msg_len = _set_max_msg_len,
+				.get_max_msg_len = _get_max_msg_len,
 				.change_state = _change_state,
 				.get_recommendation = _get_recommendation,
 				.set_recommendation = _set_recommendation,
@@ -380,9 +396,9 @@ imv_state_t *imv_attestation_state_create(TNC_ConnectionID connection_id)
 			.check_off_file_meas_request = _check_off_file_meas_request,
 			.get_file_meas_request_count = _get_file_meas_request_count,
 			.add_component = _add_component,
-			.check_off_component = _check_off_component,
-			.check_off_registrations = _check_off_registrations,
-			.get_component_count = _get_component_count,
+			.get_component = _get_component,
+			.finalize_components = _finalize_components,
+			.components_finalized = _components_finalized,
 			.get_measurement_error = _get_measurement_error,
 			.set_measurement_error = _set_measurement_error,
 		},

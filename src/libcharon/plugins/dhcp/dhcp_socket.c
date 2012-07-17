@@ -105,11 +105,6 @@ struct private_dhcp_socket_t {
 	 * DHCP server address, or broadcast
 	 */
 	host_t *dst;
-
-	/**
-	 * Callback job receiving DHCP responses
-	 */
-	callback_job_t *job;
 };
 
 /**
@@ -371,7 +366,11 @@ METHOD(dhcp_socket_t, enroll, dhcp_transaction_t*,
 	u_int32_t id;
 	int try;
 
-	this->rng->get_bytes(this->rng, sizeof(id), (u_int8_t*)&id);
+	if (!this->rng->get_bytes(this->rng, sizeof(id), (u_int8_t*)&id))
+	{
+		DBG1(DBG_CFG, "DHCP DISCOVER failed, no transaction ID");
+		return NULL;
+	}
 	transaction = dhcp_transaction_create(id, identity);
 
 	this->mutex->lock(this->mutex);
@@ -613,10 +612,6 @@ static job_requeue_t receive_dhcp(private_dhcp_socket_t *this)
 METHOD(dhcp_socket_t, destroy, void,
 	private_dhcp_socket_t *this)
 {
-	if (this->job)
-	{
-		this->job->cancel(this->job);
-	}
 	while (this->waiting)
 	{
 		this->condvar->signal(this->condvar);
@@ -761,9 +756,9 @@ dhcp_socket_t *dhcp_socket_create()
 		return NULL;
 	}
 
-	this->job = callback_job_create_with_prio((callback_job_cb_t)receive_dhcp,
-									this, NULL, NULL, JOB_PRIO_CRITICAL);
-	lib->processor->queue_job(lib->processor, (job_t*)this->job);
+	lib->processor->queue_job(lib->processor,
+		(job_t*)callback_job_create_with_prio((callback_job_cb_t)receive_dhcp,
+			this, NULL, (callback_job_cancel_t)return_false, JOB_PRIO_CRITICAL));
 
 	return &this->public;
 }

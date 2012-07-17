@@ -1,6 +1,5 @@
 /*
- * Copyright (C) 2011 Andreas Steffen
- *
+ * Copyright (C) 2011-2012 Andreas Steffen
  * HSR Hochschule fuer Technik Rapperswil
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -71,7 +70,8 @@ METHOD(pts_component_t, get_depth, u_int32_t,
 }
 
 METHOD(pts_component_t, measure, status_t,
-	pts_ita_comp_tgrub_t *this, pts_t *pts, pts_comp_evidence_t **evidence)
+	pts_ita_comp_tgrub_t *this, pts_t *pts, pts_comp_evidence_t **evidence,
+	pts_file_meas_t **measurements)
 {
 	pts_comp_evidence_t *evid;
 	u_int32_t extended_pcr;
@@ -142,7 +142,7 @@ METHOD(pts_component_t, verify, status_t,
 	return SUCCESS;
 }
 
-METHOD(pts_component_t, check_off_registrations, bool,
+METHOD(pts_component_t, finalize, bool,
 	pts_ita_comp_tgrub_t *this)
 {
 	return FALSE;
@@ -170,7 +170,7 @@ pts_component_t *pts_ita_comp_tgrub_create(u_int8_t qualifier, u_int32_t depth,
 			.get_depth = _get_depth,
 			.measure = _measure,
 			.verify = _verify,
-			.check_off_registrations = _check_off_registrations,
+			.finalize = _finalize,
 			.destroy = _destroy,
 		},
 		.name = pts_comp_func_name_create(PEN_ITA, PTS_ITA_COMP_FUNC_NAME_TGRUB,

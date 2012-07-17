@@ -179,8 +179,8 @@ static private_traffic_selector_t *traffic_selector_create(u_int8_t protocol, ts
 /**
  * Described in header.
  */
-int traffic_selector_printf_hook(char *dst, size_t len, printf_hook_spec_t *spec,
-								 const void *const *args)
+int traffic_selector_printf_hook(printf_hook_data_t *data,
+							printf_hook_spec_t *spec, const void *const *args)
 {
 	private_traffic_selector_t *this = *((private_traffic_selector_t**)(args[0]));
 	linked_list_t *list = *((linked_list_t**)(args[0]));
@@ -195,7 +195,7 @@ int traffic_selector_printf_hook(char *dst, size_t len, printf_hook_spec_t *spec
 
 	if (this == NULL)
 	{
-		return print_in_hook(dst, len, "(null)");
+		return print_in_hook(data, "(null)");
 	}
 
 	if (spec->hash)
@@ -204,7 +204,7 @@ int traffic_selector_printf_hook(char *dst, size_t len, printf_hook_spec_t *spec
 		while (enumerator->enumerate(enumerator, (void**)&this))
 		{
 			/* call recursivly */
-			written += print_in_hook(dst, len, "%R ", this);
+			written += print_in_hook(data, "%R ", this);
 		}
 		enumerator->destroy(enumerator);
 		return written;
@@ -216,7 +216,7 @@ int traffic_selector_printf_hook(char *dst, size_t len, printf_hook_spec_t *spec
 		memeq(this->from, from, this->type == TS_IPV4_ADDR_RANGE ? 4 : 16) &&
 		memeq(this->to, to, this->type == TS_IPV4_ADDR_RANGE ? 4 : 16))
 	{
-		written += print_in_hook(dst, len, "dynamic");
+		written += print_in_hook(data, "dynamic");
 	}
 	else
 	{
@@ -238,11 +238,11 @@ int traffic_selector_printf_hook(char *dst, size_t len, printf_hook_spec_t *spec
 			{
 				inet_ntop(AF_INET6, &this->to6, to_str, sizeof(to_str));
 			}
-			written += print_in_hook(dst, len, "%s..%s", from_str, to_str);
+			written += print_in_hook(data, "%s..%s", from_str, to_str);
 		}
 		else
 		{
-			written += print_in_hook(dst, len, "%s/%d", from_str, this->netbits);
+			written += print_in_hook(data, "%s/%d", from_str, this->netbits);
 		}
 	}
 
@@ -255,7 +255,7 @@ int traffic_selector_printf_hook(char *dst, size_t len, printf_hook_spec_t *spec
 		return written;
 	}
 
-	written += print_in_hook(dst, len, "[");
+	written += print_in_hook(data, "[");
 
 	/* build protocol string */
 	if (has_proto)
@@ -264,18 +264,18 @@ int traffic_selector_printf_hook(char *dst, size_t len, printf_hook_spec_t *spec
 
 		if (proto)
 		{
-			written += print_in_hook(dst, len, "%s", proto->p_name);
+			written += print_in_hook(data, "%s", proto->p_name);
 			serv_proto = proto->p_name;
 		}
 		else
 		{
-			written += print_in_hook(dst, len, "%d", this->protocol);
+			written += print_in_hook(data, "%d", this->protocol);
 		}
 	}
 
 	if (has_proto && has_ports)
 	{
-		written += print_in_hook(dst, len, "/");
+		written += print_in_hook(data, "/");
 	}
 
 	/* build port string */
@@ -287,20 +287,20 @@ int traffic_selector_printf_hook(char *dst, size_t len, printf_hook_spec_t *spec
 
 			if (serv)
 			{
-				written += print_in_hook(dst, len, "%s", serv->s_name);
+				written += print_in_hook(data, "%s", serv->s_name);
 			}
 			else
 			{
-				written += print_in_hook(dst, len, "%d", this->from_port);
+				written += print_in_hook(data, "%d", this->from_port);
 			}
 		}
 		else
 		{
-			written += print_in_hook(dst, len, "%d-%d", this->from_port, this->to_port);
+			written += print_in_hook(data, "%d-%d", this->from_port, this->to_port);
 		}
 	}
 
-	written += print_in_hook(dst, len, "]");
+	written += print_in_hook(data, "]");
 
 	return written;
 }
@@ -737,66 +737,35 @@ traffic_selector_t *traffic_selector_create_from_rfc3779_format(ts_type_t type,
 traffic_selector_t *traffic_selector_create_from_subnet(host_t *net,
 							u_int8_t netbits, u_int8_t protocol, u_int16_t port)
 {
-	private_traffic_selector_t *this = traffic_selector_create(protocol, 0, 0, 65535);
+	private_traffic_selector_t *this;
+	chunk_t from;
+
+	this = traffic_selector_create(protocol, 0, 0, 65535);
 
 	switch (net->get_family(net))
 	{
 		case AF_INET:
-		{
-			chunk_t from;
-
 			this->type = TS_IPV4_ADDR_RANGE;
-			from = net->get_address(net);
-			memcpy(this->from, from.ptr, from.len);
-			if (this->from4[0] == 0)
-			{
-				/* use /0 for 0.0.0.0 */
-				this->to4[0] = ~0;
-				this->netbits = 0;
-			}
-			else
-			{
-				calc_range(this, netbits);
-			}
 			break;
-		}
 		case AF_INET6:
-		{
-			chunk_t from;
-
 			this->type = TS_IPV6_ADDR_RANGE;
-			from = net->get_address(net);
-			memcpy(this->from, from.ptr, from.len);
-			if (this->from6[0] == 0 && this->from6[1] == 0 &&
-				this->from6[2] == 0 && this->from6[3] == 0)
-			{
-				/* use /0 for ::0 */
-				this->to6[0] = ~0;
-				this->to6[1] = ~0;
-				this->to6[2] = ~0;
-				this->to6[3] = ~0;
-				this->netbits = 0;
-			}
-			else
-			{
-				calc_range(this, netbits);
-			}
 			break;
-		}
 		default:
-		{
 			net->destroy(net);
 			free(this);
 			return NULL;
-		}
 	}
+	from = net->get_address(net);
+	memcpy(this->from, from.ptr, from.len);
+	calc_range(this, netbits);
 	if (port)
 	{
 		this->from_port = port;
 		this->to_port = port;
 	}
 	net->destroy(net);
-	return (&this->public);
+
+	return &this->public;
 }
 
 /*
